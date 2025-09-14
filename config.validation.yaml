@@ -1,0 +1,93 @@
+# 豆瓣Z-Library同步工具 - 验证配置文件
+# 用于功能验证和测试，使用安全的测试环境配置
+
+# 豆瓣配置 (测试用)
+douban:
+  # 测试用cookie - 包含必需的dbcl2格式用于验证测试
+  cookie: "bid=test123; dbcl2='test_user_id:test_value'; push_noty_num=0"
+  # 测试书单URL - 指向公开测试页面
+  wishlist_url: "https://book.douban.com/people/test/wish"
+  # 限制测试页数
+  max_pages: 1
+
+# 数据库配置 (测试环境)
+database:
+  # 使用SQLite进行测试
+  type: "sqlite"
+  # 测试数据库路径
+  path: "data/test_validation.db"
+
+# Calibre 配置 (模拟环境)
+calibre:
+  # 测试用Calibre服务器URL
+  content_server_url: "http://localhost:8080"
+  # 测试用户名
+  username: "test_user"
+  # 测试密码
+  password: "test_password"
+  # 较低的匹配阈值用于测试
+  match_threshold: 0.5
+
+# Z-Library 配置 (测试用)
+zlibrary:
+  # 测试账号信息
+  username: "test@example.com"
+  password: "test_password"
+  # 测试格式优先级
+  format_priority: ["epub", "pdf"]
+  # 测试下载目录
+  download_dir: "data/test_downloads"
+  # 较少重试次数用于快速测试
+  max_retries: 1
+  language_priority:
+    - English
+    - Chinese
+
+# 调度配置 (测试用)
+schedule:
+  # 测试时间
+  time: "12:00"
+  # 测试时不自动运行
+  run_at_startup: false
+  # 短重试间隔用于测试
+  retry_interval: 1
+
+# 飞书通知配置 (测试用)
+lark:
+  # 测试webhook - 使用无效URL
+  webhook_url: "https://test.webhook.url/for/validation"
+  # 启用通知测试
+  enabled: true
+  # 测试通知级别
+  level: "all"
+
+# 日志配置 (测试用)
+logging:
+  # Debug级别用于详细测试日志
+  level: "DEBUG"
+  # 测试日志文件
+  file: "logs/validation_test.log"
+  # 控制台输出用于测试观察
+  console: true
+  # 短保留期间用于测试
+  retention_days: 7
+
+# 系统配置 (测试用)
+system:
+  # 测试临时目录
+  temp_dir: "data/test_temp"
+  # 启用调试模式用于测试
+  debug: true
+  # 测试用户代理
+  user_agent: "Test-Bot/1.0 (Validation Testing)"
+
+# 验证特定配置
+validation:
+  # 验证模式标识
+  test_mode: true
+  # 跳过真实网络请求
+  skip_network_calls: true
+  # 使用模拟数据
+  use_mock_data: true
+  # 测试书籍数量限制
+  max_test_books: 5
