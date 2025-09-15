@@ -308,26 +308,25 @@ class CalibreService:
             if not books:
                 return None
 
-            # 如果只有一个结果，直接返回
-            if len(books) == 1:
-                return books[0]
-
-            # 多个结果时，计算最佳匹配
+            # 计算所有结果的匹配分数，选择最高分且超过阈值的
             best_match = None
             best_score = 0.0
 
             for book in books:
                 score = self._calculate_match_score(book, title, author, isbn)
+                self.logger.debug(f"匹配评分: {book['title']} - {score:.3f}")
+
                 if score > best_score and score >= self.match_threshold:
                     best_score = score
                     best_match = book
 
             if best_match:
                 self.logger.info(f"找到最佳匹配: {best_match['title']} "
-                                 f"(匹配度: {best_score:.2f})")
+                                 f"(匹配度: {best_score:.3f}, 阈值: {self.match_threshold})")
             else:
+                max_score = max([self._calculate_match_score(book, title, author, isbn) for book in books]) if books else 0.0
                 self.logger.info(f"未找到满足阈值的匹配书籍 "
-                                 f"(阈值: {self.match_threshold})")
+                                 f"(最高匹配度: {max_score:.3f}, 阈值: {self.match_threshold})")
 
             return best_match
 
@@ -352,21 +351,26 @@ class CalibreService:
         """
         score = 0.0
 
-        # ISBN 匹配权重最高
+        # ISBN 匹配权重最高 - 如果ISBN完全匹配，直接返回高分
         if isbn and book.get('isbn'):
-            if isbn == book['isbn']:
-                score += 0.6
+            if isbn.strip() == book['isbn'].strip():
+                return 1.0  # ISBN匹配是最可靠的，直接返回满分
 
-        # 标题匹配
-        if title and book.get('title'):
+        # 如果没有ISBN或ISBN不匹配，基于标题和作者计算
+        has_title = title and book.get('title')
+        has_author = author and book.get('author')
+
+        if has_title:
             title_similarity = self._calculate_similarity(title, book['title'])
-            score += title_similarity * 0.3
+            # 动态权重：如果没有作者信息，标题权重更高
+            title_weight = 0.8 if not has_author else 0.7
+            score += title_similarity * title_weight
 
-        # 作者匹配
-        if author and book.get('author'):
-            author_similarity = self._calculate_similarity(
-                author, book['author'])
-            score += author_similarity * 0.1
+        if has_author:
+            author_similarity = self._calculate_similarity(author, book['author'])
+            # 动态权重：如果没有标题信息，作者权重更高（理论上不会发生）
+            author_weight = 0.8 if not has_title else 0.3
+            score += author_similarity * author_weight
 
         return min(score, 1.0)
 

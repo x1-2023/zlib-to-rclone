@@ -138,9 +138,9 @@ class DoubanZLibraryCalibrer:
         
         # 配额管理器
         zlibrary_config = self.config_manager.get_zlibrary_config()
-        if 'email' in zlibrary_config and 'password' in zlibrary_config:
+        if 'username' in zlibrary_config and 'password' in zlibrary_config:
             self.quota_manager = QuotaManager(
-                email=zlibrary_config['email'],
+                email=zlibrary_config['username'],
                 password=zlibrary_config['password'],
                 cache_minutes=5
             )
