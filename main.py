@@ -22,6 +22,7 @@ from core.__version__ import __version__, get_version_info
 from core.error_handler import ErrorHandler
 from core.pipeline import PipelineManager
 # 导入新架构组件
+from core.quota_manager import QuotaManager
 from core.state_manager import BookStateManager
 from core.task_scheduler import ScheduledTask, TaskPriority, TaskScheduler
 from db.database import Database
@@ -135,10 +136,24 @@ class DoubanZLibraryCalibrer:
         # 设置task_scheduler的state_manager引用
         self.task_scheduler.state_manager = self.state_manager
         
+        # 配额管理器
+        zlibrary_config = self.config_manager.get_zlibrary_config()
+        if 'email' in zlibrary_config and 'password' in zlibrary_config:
+            self.quota_manager = QuotaManager(
+                email=zlibrary_config['email'],
+                password=zlibrary_config['password'],
+                cache_minutes=5
+            )
+        else:
+            # 如果配置不完整，不启用配额管理
+            self.quota_manager = None
+            self.logger.warning("ZLibrary配置不完整，配额管理功能将被禁用")
+
         # Pipeline管理器
         max_workers = 1 if self.debug_mode else 4
         self.pipeline_manager = PipelineManager(
             self.state_manager,
+            quota_manager=self.quota_manager,
             max_workers=max_workers
         )
         
@@ -213,6 +228,7 @@ class DoubanZLibraryCalibrer:
         # 下载阶段
         download_stage = DownloadStage(
             self.state_manager, self.zlibrary_service,
+            quota_manager=self.quota_manager,
             download_dir=zlib_config.get('download_dir', 'data/downloads')
         )
         self.pipeline_manager.register_stage(download_stage)
@@ -575,73 +591,43 @@ class DoubanZLibraryCalibrer:
     def _wait_for_pipeline_completion(self, max_wait_minutes: int = 60):
         """等待Pipeline处理完成"""
         self.logger.info(f"等待Pipeline处理完成 (最大等待 {max_wait_minutes} 分钟)")
-        
+
         start_time = datetime.now()
-        
+        consecutive_empty_checks = 0
+
         while not self._shutdown_event.is_set():
-            # 检查是否有活跃任务
-            # 使用状态管理器获取书籍统计，因为pipeline_manager没有运行
-            pipeline_status = {
-                'running': False,
-                'active_tasks': 0,
-                'max_workers': 4,
-                'registered_stages': ['data_collection', 'search', 'download', 'upload'],
-                'book_statistics': self.state_manager.get_status_statistics()
-            }
+            # 检查任务调度器状态
             scheduler_status = self.task_scheduler.get_status()
-            
+
             active_tasks = (
-                pipeline_status['active_tasks'] + 
                 scheduler_status['active_tasks'] +
                 scheduler_status['queue_size']
             )
-            
-            # 检查是否需要调度下一本书（顺序处理逻辑）
-            self._schedule_next_book_if_needed()
-            
-            # 如果有活跃任务，重置循环计数器
-            if active_tasks > 0 and hasattr(self, '_empty_queue_cycles'):
-                self._empty_queue_cycles = 0
-            
+
             if active_tasks == 0:
-                # 检查是否还有待处理的书籍
-                if hasattr(self, 'pending_books_queue') and self.pending_books_queue:
-                    self.logger.info(f"当前任务队列为空，但还有 {len(self.pending_books_queue)} 本书等待处理")
-                    
-                    # 检查循环次数，防止无限循环
-                    if not hasattr(self, '_empty_queue_cycles'):
-                        self._empty_queue_cycles = 0
-                    
-                    self._empty_queue_cycles += 1
-                    
-                    # 如果连续10次队列为空但还有书籍，说明可能卡死了
-                    if self._empty_queue_cycles >= 10:
-                        self.logger.error("检测到可能的死循环：队列为空但书籍无法调度，强制退出")
-                        # 记录当前状态用于调试
-                        if hasattr(self, 'current_processing_book'):
-                            self.logger.error(f"当前处理书籍: {self.current_processing_book}")
-                        remaining_books = [f"ID{book['id']}: {book.get('status', 'UNKNOWN')}" for book in self.pending_books_queue[:5]]
-                        self.logger.error(f"剩余书籍前5本: {remaining_books}")
-                        break
-                    
-                    # 继续等待，可能有书籍状态还未到达终态
-                    if self._shutdown_event.wait(5):
-                        break
-                    continue
-                else:
-                    self.logger.info("Pipeline处理完成")
+                consecutive_empty_checks += 1
+                # 连续3次检查都没有活跃任务，认为处理完成
+                if consecutive_empty_checks >= 3:
+                    self.logger.info("Pipeline处理完成，所有任务已处理完毕")
                     break
-            
-            # 检查是否超时
-            elapsed = datetime.now() - start_time
-            if elapsed.total_seconds() > max_wait_minutes * 60:
-                self.logger.warning(f"Pipeline处理超时，仍有 {active_tasks} 个活跃任务")
-                break
-            
-            # 每30秒报告一次状态
-            self.logger.info(f"Pipeline处理中，活跃任务: {active_tasks}")
-            if self._shutdown_event.wait(30):
-                break
+                # 短暂等待，确认是否真的完成
+                if self._shutdown_event.wait(5):
+                    break
+            else:
+                consecutive_empty_checks = 0
+
+                # 检查是否超时
+                elapsed = datetime.now() - start_time
+                if elapsed.total_seconds() > max_wait_minutes * 60:
+                    self.logger.warning(f"Pipeline处理超时，仍有 {active_tasks} 个活跃任务")
+                    break
+
+                # 每30秒报告一次状态
+                if int(elapsed.total_seconds()) % 30 == 0:
+                    self.logger.info(f"Pipeline处理中，活跃任务: {active_tasks}")
+
+                if self._shutdown_event.wait(10):
+                    break
     
     def get_status(self) -> Dict[str, Any]:
         """获取系统状态"""
@@ -745,31 +731,32 @@ class DoubanZLibraryCalibrer:
     
     def _schedule_pipeline_tasks_for_books(self, books: List[Dict[str, Any]]) -> int:
         """
-        为书籍列表调度Pipeline任务（顺序处理：一次只处理一本书）
-        
+        为书籍列表调度Pipeline任务（并行处理：同时调度所有可处理的书籍）
+
         Args:
             books: 书籍信息列表 (包含id和status)
-            
+
         Returns:
             int: 调度的任务数量
         """
         if not books:
             return 0
-        
-        # 保存待处理书籍队列到实例变量
-        self.pending_books_queue = books.copy()
-        
-        # 只调度第一本书的任务
-        first_book = self.pending_books_queue[0]
-        scheduled_count = self._schedule_single_book_task(first_book)
-        
+
+        scheduled_count = 0
+
+        # 在debug模式下限制并行任务数量，避免过多日志输出
+        if self.debug_mode and len(books) > 3:
+            books = books[:3]
+            self.logger.info(f"调试模式：限制处理书籍数量为 {len(books)} 本")
+
+        # 调度所有书籍的任务，让状态管理器自动处理后续流转
+        for book_info in books:
+            scheduled = self._schedule_single_book_task(book_info)
+            scheduled_count += scheduled
+
         if scheduled_count > 0:
-            # 记录当前正在处理的书籍
-            self.current_processing_book = first_book
-            book_title = first_book.get('title', f'书籍ID{first_book["id"]}')
-            self.logger.info(f"开始顺序处理书籍队列，当前处理: {book_title} "
-                           f"(队列中还有 {len(self.pending_books_queue) - 1} 本书等待)")
-        
+            self.logger.info(f"已调度 {scheduled_count} 个任务，系统将自动处理后续阶段流转")
+
         return scheduled_count
     
     def _schedule_single_book_task(self, book_info: Dict[str, Any]) -> int:
@@ -813,67 +800,6 @@ class DoubanZLibraryCalibrer:
             self.logger.warning(f"调度任务失败: 书籍ID {book_id}, 阶段 {current_stage}, 错误: {str(e)}")
             return 0
     
-    def _schedule_next_book_if_needed(self):
-        """
-        检查当前书籍是否完成，如果完成则调度下一本书
-        """
-        if not hasattr(self, 'pending_books_queue') or not self.pending_books_queue:
-            return
-        
-        # 如果没有当前处理的书籍，但队列不为空，说明需要开始处理第一本书
-        if not hasattr(self, 'current_processing_book') or not self.current_processing_book:
-            self.logger.info("没有当前处理书籍，尝试从队列中调度第一本书")
-            first_book = self.pending_books_queue[0]
-            scheduled = self._schedule_single_book_task(first_book)
-            if scheduled > 0:
-                self.current_processing_book = first_book
-                book_title = first_book.get('title', f'书籍ID{first_book["id"]}')
-                self.logger.info(f"开始处理第一本书: {book_title}")
-            else:
-                # 如果第一本书调度失败，移除并尝试下一本
-                self.pending_books_queue.pop(0)
-                self._schedule_next_book_if_needed()
-            return
-        
-        current_book_id = self.current_processing_book['id']
-        
-        # 检查当前书籍是否已完成（到达终态）
-        with self.state_manager.get_session() as session:
-            current_book = session.get(DoubanBook, current_book_id)
-            if not current_book:
-                return
-            
-            # 终态：已完成、已存在、或永久失败
-            terminal_states = [BookStatus.COMPLETED, BookStatus.SKIPPED_EXISTS, BookStatus.FAILED_PERMANENT]
-            
-            if current_book.status in terminal_states:
-                # 当前书籍已完成，从队列中移除
-                self.pending_books_queue.pop(0)
-                completed_book_title = self.current_processing_book.get('title', f'ID{current_book_id}')
-                self.logger.info(f"书籍处理完成: {completed_book_title} "
-                               f"-> {current_book.status.value}")
-                
-                # 调度下一本书（如果还有）
-                if self.pending_books_queue:
-                    next_book = self.pending_books_queue[0]
-                    scheduled = self._schedule_single_book_task(next_book)
-                    if scheduled > 0:
-                        self.current_processing_book = next_book
-                        next_book_title = next_book.get('title', f'书籍ID{next_book["id"]}')
-                        self.logger.info(f"开始处理下一本书: {next_book_title} "
-                                       f"(队列中还有 {len(self.pending_books_queue) - 1} 本书等待)")
-                    else:
-                        # 如果调度失败，继续尝试下一本
-                        self.current_processing_book = None
-                        self._schedule_next_book_if_needed()
-                else:
-                    # 队列处理完毕
-                    self.current_processing_book = None
-                    self.logger.info("所有书籍处理完成！")
-            else:
-                processing_book_title = self.current_processing_book.get('title', f'ID{current_book_id}')
-                self.logger.debug(f"当前书籍仍在处理中: {processing_book_title} "
-                                f"-> {current_book.status.value}")
 
 
 def main():

@@ -976,6 +976,28 @@ class ZLibraryService:
                 'daily_reset': 0
             }
 
+    async def get_download_quota(self) -> Dict[str, Any]:
+        """
+        异步获取下载配额信息（供QuotaManager使用）
+        
+        Returns:
+            Dict[str, Any]: 配额信息字典
+                - remaining: 剩余下载次数
+                - daily_limit: 每日限制
+                - next_reset: 下次重置时间
+        """
+        try:
+            limits = self.get_download_limits()
+            return {
+                'remaining': limits.get('daily_remaining', 0),
+                'daily_limit': limits.get('daily_amount', 10),
+                'next_reset': limits.get('daily_reset', None)
+            }
+        except Exception as e:
+            self.logger.error(f"获取配额信息失败: {e}")
+            from core.pipeline import NetworkError
+            raise NetworkError(f"无法获取配额信息: {e}")
+
     def check_download_available(self) -> bool:
         """
         检查是否有可用的下载次数

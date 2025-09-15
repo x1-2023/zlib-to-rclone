@@ -8,6 +8,7 @@ dependencies = [
     "larkpy>=0.2.2",
     "nest-asyncio>=1.6.0",
     "pytest>=8.4.1",
+    "pytest-asyncio",
     "pyyaml>=6.0.2",
     "sqlalchemy>=2.0.43",
 ]

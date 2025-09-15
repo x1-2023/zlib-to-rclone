@@ -47,8 +47,15 @@ class BookStateManager:
             BookStatus.FAILED_PERMANENT,
             BookStatus.SEARCH_QUEUED  # 重试时回退
         },
-        BookStatus.SEARCH_COMPLETE:
-        {BookStatus.DOWNLOAD_QUEUED, BookStatus.FAILED_PERMANENT},
+        BookStatus.SEARCH_COMPLETE: {
+            BookStatus.DOWNLOAD_QUEUED, 
+            BookStatus.SEARCH_COMPLETE_QUOTA_EXHAUSTED,  # 新增：配额不足时转换
+            BookStatus.FAILED_PERMANENT
+        },
+        BookStatus.SEARCH_COMPLETE_QUOTA_EXHAUSTED: {  # 新增状态的转换规则
+            BookStatus.DOWNLOAD_QUEUED,  # 配额恢复后重新加入下载队列
+            BookStatus.FAILED_PERMANENT
+        },
         BookStatus.SEARCH_NO_RESULTS: {
             BookStatus.SEARCH_QUEUED,  # 重试
             BookStatus.FAILED_PERMANENT

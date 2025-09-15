@@ -26,6 +26,7 @@ class BookStatus(enum.Enum):
     SEARCH_QUEUED = "search_queued"       # 排队搜索
     SEARCH_ACTIVE = "search_active"       # 搜索中
     SEARCH_COMPLETE = "search_complete"   # 搜索完成有结果
+    SEARCH_COMPLETE_QUOTA_EXHAUSTED = "search_complete_quota_exhausted"  # 搜索完成但配额不足
     SEARCH_NO_RESULTS = "search_no_results"  # 搜索无结果
     
     # 下载阶段

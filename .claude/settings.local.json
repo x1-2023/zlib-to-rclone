@@ -17,7 +17,10 @@
       "Bash(uv pip:*)",
       "Bash(pytest:*)",
       "Bash(uv venv:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(.specify/scripts/bash/create-new-feature.sh:*)",
+      "Bash(.specify/scripts/bash/setup-plan.sh:*)",
+      "Bash(.specify/scripts/bash/check-task-prerequisites.sh:*)"
     ],
     "deny": [
       "Read(config.yaml)"

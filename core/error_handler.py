@@ -166,6 +166,24 @@ class ErrorClassifier:
             retry_strategy=RetryStrategy.NO_RETRY,
             retryable=False,
             requires_human_intervention=True
+        ),
+        
+        # 配额相关错误
+        "quota_exhausted": ErrorInfo(
+            error_type="quota_exhausted",
+            error_message="下载配额已耗尽",
+            severity=ErrorSeverity.LOW,  # 这是正常业务逻辑，不是严重错误
+            retry_strategy=RetryStrategy.NO_RETRY,
+            retryable=False,  # 配额耗尽时不重试，而是跳过
+            requires_human_intervention=False  # 系统可以自动处理（跳过下载）
+        ),
+        "quota_check_failed": ErrorInfo(
+            error_type="quota_check_failed",
+            error_message="配额检查失败",
+            severity=ErrorSeverity.MEDIUM,
+            retry_strategy=RetryStrategy.EXPONENTIAL_BACKOFF,
+            max_retries=3,
+            base_delay_seconds=60
         )
     }
     

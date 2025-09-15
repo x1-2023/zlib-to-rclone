@@ -7,12 +7,13 @@
 
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from core.pipeline import (BaseStage, DownloadLimitExhaustedError,
                            NetworkError, ProcessingError,
                            ResourceNotFoundError)
 from core.state_manager import BookStateManager
+from core.quota_manager import QuotaManager
 from db.models import (BookStatus, DoubanBook, DownloadQueue, DownloadRecord,
                        ZLibraryBook)
 from services.zlibrary_service import ZLibraryService
@@ -25,6 +26,7 @@ class DownloadStage(BaseStage):
         self, 
         state_manager: BookStateManager, 
         zlibrary_service: ZLibraryService,
+        quota_manager: Optional[QuotaManager] = None,
         download_dir: str = "data/downloads"
     ):
         """
@@ -33,10 +35,12 @@ class DownloadStage(BaseStage):
         Args:
             state_manager: 状态管理器
             zlibrary_service: Z-Library服务实例
+            quota_manager: 配额管理器（可选，用于配额感知处理）
             download_dir: 下载目录
         """
         super().__init__("download", state_manager)
         self.zlibrary_service = zlibrary_service
+        self.quota_manager = quota_manager
         self.download_dir = Path(download_dir)
         
         # 确保下载目录存在
@@ -332,3 +336,156 @@ class DownloadStage(BaseStage):
             return os.path.getsize(file_path)
         except Exception:
             return 0
+    
+    # ===== 配额感知增强方法 =====
+    
+    async def process_book(self, book: DoubanBook) -> bool:
+        """
+        配额感知的书籍处理方法
+        
+        Args:
+            book: 书籍对象
+            
+        Returns:
+            bool: 处理是否成功（下载或跳过都算成功）
+            
+        Raises:
+            ProcessingError: 处理过程中的业务逻辑错误
+            NetworkError: 网络相关错误
+        """
+        # 验证书籍状态
+        if book.status != BookStatus.SEARCH_COMPLETE:
+            raise ProcessingError(f"书籍状态不正确: {book.status}, 需要 SEARCH_COMPLETE")
+        
+        # 如果有配额管理器，先检查配额
+        if self.quota_manager is not None:
+            if not self.quota_manager.has_quota_available():
+                self.logger.info(f"配额不足，跳过下载: {book.title}")
+                await self.handle_quota_exhausted(book)
+                return True
+            
+            # 消费配额
+            if not self.quota_manager.consume_quota(1):
+                self.logger.warning(f"配额消费失败，跳过下载: {book.title}")
+                await self.handle_quota_exhausted(book)
+                return True
+        
+        # 配额充足或没有配额管理器，执行正常下载流程
+        try:
+            success = await self._download_book_async(book)
+            if success:
+                book.status = BookStatus.DOWNLOAD_COMPLETE
+                self.logger.info(f"书籍下载完成: {book.title}")
+            return success
+            
+        except Exception as e:
+            self.logger.error(f"下载失败: {book.title}, 错误: {e}")
+            raise
+    
+    async def check_quota_before_download(self) -> bool:
+        """
+        在开始下载前检查配额可用性
+        
+        Returns:
+            bool: True如果有可用配额，False如果配额已耗尽
+        """
+        if self.quota_manager is None:
+            # 没有配额管理器，默认认为有配额
+            return True
+        
+        try:
+            quota = await self.quota_manager.get_current_quota()
+            has_quota = quota.has_quota_available()
+            
+            self.logger.info(f"配额检查: 剩余 {quota.remaining_downloads}/{quota.daily_limit}")
+            return has_quota
+            
+        except Exception as e:
+            self.logger.error(f"配额检查失败: {e}")
+            raise NetworkError(f"无法检查下载配额: {e}")
+    
+    async def handle_quota_exhausted(self, book: DoubanBook) -> None:
+        """
+        处理配额耗尽的情况
+        
+        Args:
+            book: 当前处理的书籍
+        """
+        # 更新书籍状态
+        book.status = BookStatus.SEARCH_COMPLETE_QUOTA_EXHAUSTED
+        
+        # 记录日志
+        self.logger.info(f"配额不足，跳过下载任务: {book.title} (ID: {book.douban_id})")
+        self.logger.info(f"书籍状态已更新: {BookStatus.SEARCH_COMPLETE} -> {BookStatus.SEARCH_COMPLETE_QUOTA_EXHAUSTED}")
+        
+        # 这里可以添加通知逻辑
+        # TODO: 发送通知给监控系统
+    
+    async def resume_quota_exhausted_books(self) -> int:
+        """
+        恢复处理之前因配额不足而跳过的书籍
+        
+        Returns:
+            int: 重新加入处理队列的书籍数量
+        """
+        if self.quota_manager is None:
+            self.logger.warning("没有配额管理器，无法恢复跳过的书籍")
+            return 0
+        
+        # 检查当前配额
+        try:
+            has_quota = await self.check_quota_before_download()
+            if not has_quota:
+                self.logger.info("配额仍然不足，不恢复跳过的书籍")
+                return 0
+        except Exception as e:
+            self.logger.error(f"检查配额时出错: {e}")
+            return 0
+        
+        # 查找配额耗尽的书籍
+        try:
+            exhausted_books = await self._find_quota_exhausted_books()
+            
+            if not exhausted_books:
+                self.logger.info("没有找到需要恢复的书籍")
+                return 0
+            
+            # 更新书籍状态
+            resumed_count = 0
+            for book in exhausted_books:
+                await self._update_book_status(book, BookStatus.DOWNLOAD_QUEUED)
+                resumed_count += 1
+            
+            self.logger.info(f"配额已恢复，重新加入处理队列: {resumed_count} 本书籍")
+            return resumed_count
+            
+        except Exception as e:
+            self.logger.error(f"恢复跳过书籍时出错: {e}")
+            return 0
+    
+    async def _find_quota_exhausted_books(self) -> List[DoubanBook]:
+        """查找状态为SEARCH_COMPLETE_QUOTA_EXHAUSTED的书籍"""
+        with self.state_manager.get_session() as session:
+            books = session.query(DoubanBook).filter(
+                DoubanBook.status == BookStatus.SEARCH_COMPLETE_QUOTA_EXHAUSTED
+            ).all()
+            return books
+    
+    async def _update_book_status(self, book: DoubanBook, new_status: BookStatus) -> None:
+        """更新书籍状态"""
+        with self.state_manager.get_session() as session:
+            book.status = new_status
+            session.merge(book)
+            session.commit()
+            self.logger.debug(f"书籍状态更新: {book.title} -> {new_status}")
+    
+    async def _download_book_async(self, book: DoubanBook) -> bool:
+        """异步版本的书籍下载方法"""
+        # 调用现有的同步下载逻辑
+        # 这里可以根据实际需要进行异步改造
+        try:
+            result = self.process(book)  # 调用现有的同步process方法
+            return result
+        except Exception as e:
+            self.logger.error(f"下载书籍失败: {e}")
+            raise ProcessingError(f"下载失败: {e}")

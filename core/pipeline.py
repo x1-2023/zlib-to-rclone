@@ -18,6 +18,11 @@ from core.state_manager import BookStateManager
 from db.models import BookStatus, DoubanBook, ProcessingTask
 from utils.logger import get_logger
 
+# 延迟导入避免循环依赖
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from core.quota_manager import QuotaManager
+
 
 class ProcessingError(Exception):
     """处理错误基类"""
@@ -381,15 +386,17 @@ class BaseStage(abc.ABC):
 class PipelineManager:
     """Pipeline管理器"""
 
-    def __init__(self, state_manager: BookStateManager, max_workers: int = 4):
+    def __init__(self, state_manager: BookStateManager, quota_manager: Optional['QuotaManager'] = None, max_workers: int = 4):
         """
         初始化Pipeline管理器
         
         Args:
             state_manager: 状态管理器实例
+            quota_manager: 配额管理器实例（可选）
             max_workers: 最大工作线程数
         """
         self.state_manager = state_manager
+        self.quota_manager = quota_manager
         self.max_workers = max_workers
         self.logger = get_logger("pipeline_manager")
 
@@ -407,6 +414,10 @@ class PipelineManager:
         
         # 阶段暂停状态
         self._paused_stages: Dict[str, str] = {}  # stage_name -> pause_reason
+        
+        # 配额检查计数器（避免频繁检查）
+        self._quota_check_counter = 0
+        self._quota_check_interval = 10  # 每10次处理检查一次配额
 
     def register_stage(self, stage: BaseStage):
         """
@@ -498,6 +509,25 @@ class PipelineManager:
                         self.logger.warning(f"检测到豆瓣403错误，暂停阶段 {stage_name}")
                         self._paused_stages[stage_name] = "豆瓣403错误，停止详情获取"
                     return
+            
+            # 特殊检查：如果是download阶段，检查配额状态
+            if stage_name == 'download' and self.quota_manager is not None:
+                # 定期检查配额状态
+                self._quota_check_counter += 1
+                if self._quota_check_counter >= self._quota_check_interval:
+                    self._quota_check_counter = 0
+                    if not self._check_download_quota():
+                        if stage_name not in self._paused_stages:
+                            self.logger.warning(f"检测到配额不足，暂停下载阶段")
+                            self._paused_stages[stage_name] = "下载配额不足，等待配额恢复"
+                        return
+                    else:
+                        # 配额恢复，移除暂停状态
+                        if stage_name in self._paused_stages and "配额不足" in self._paused_stages[stage_name]:
+                            self.logger.info(f"配额已恢复，恢复下载阶段")
+                            del self._paused_stages[stage_name]
+                            # 触发配额恢复处理
+                            self._resume_quota_exhausted_books()
             
             # 阶段名到状态阶段的映射
             stage_mapping = {
@@ -617,6 +647,77 @@ class PipelineManager:
         }
 
         return status
+    
+    def _check_download_quota(self) -> bool:
+        """
+        检查下载配额是否可用
+        
+        Returns:
+            bool: True如果有可用配额，False如果配额不足
+        """
+        if self.quota_manager is None:
+            return True
+        
+        try:
+            return self.quota_manager.has_quota_available()
+        except Exception as e:
+            self.logger.error(f"检查下载配额失败: {e}")
+            # 检查失败时假定有配额，避免阻塞正常流程
+            return True
+    
+    def _resume_quota_exhausted_books(self):
+        """恢复因配额不足而跳过的书籍"""
+        try:
+            # 找到下载阶段
+            download_stage = self.stages.get('download')
+            if download_stage and hasattr(download_stage, 'resume_quota_exhausted_books'):
+                # 异步执行恢复操作
+                import asyncio
+                async def resume_books():
+                    return await download_stage.resume_quota_exhausted_books()
+                
+                # 在新的事件循环中执行（避免与现有循环冲突）
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # 如果已有运行的循环，创建任务
+                        future = asyncio.ensure_future(resume_books())
+                        # 不等待完成，让它在后台运行
+                    else:
+                        # 没有运行的循环，直接运行
+                        resumed_count = asyncio.run(resume_books())
+                        self.logger.info(f"恢复了 {resumed_count} 本书籍的下载状态")
+                except Exception as e:
+                    self.logger.error(f"恢复跳过书籍时出错: {e}")
+            else:
+                self.logger.warning("未找到下载阶段或不支持配额恢复功能")
+                
+        except Exception as e:
+            self.logger.error(f"恢复配额耗尽书籍失败: {e}")
+    
+    def get_quota_status(self) -> Dict[str, Any]:
+        """
+        获取配额状态信息
+        
+        Returns:
+            Dict[str, Any]: 配额状态信息
+        """
+        if self.quota_manager is None:
+            return {'quota_manager_available': False}
+        
+        try:
+            quota_available = self.quota_manager.has_quota_available()
+            return {
+                'quota_manager_available': True,
+                'quota_available': quota_available,
+                'download_stage_paused': 'download' in self._paused_stages,
+                'pause_reason': self._paused_stages.get('download', None)
+            }
+        except Exception as e:
+            return {
+                'quota_manager_available': True,
+                'quota_check_error': str(e)
+            }
 
     def reset_stuck_tasks(self, timeout_minutes: int = 30) -> int:
         """
