@@ -229,7 +229,8 @@ class DoubanZLibraryCalibrer:
         download_stage = DownloadStage(
             self.state_manager, self.zlibrary_service,
             quota_manager=self.quota_manager,
-            download_dir=zlib_config.get('download_dir', 'data/downloads')
+            download_dir=zlib_config.get('download_dir', 'data/downloads'),
+            lark_service=self.lark_service
         )
         self.pipeline_manager.register_stage(download_stage)
         

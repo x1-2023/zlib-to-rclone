@@ -685,7 +685,7 @@ class TaskScheduler:
                         BookStatus.SEARCH_ACTIVE
                     },
                     'download':
-                    {BookStatus.DOWNLOAD_QUEUED, BookStatus.DOWNLOAD_ACTIVE},
+                    {BookStatus.SEARCH_COMPLETE, BookStatus.SEARCH_COMPLETE_QUOTA_EXHAUSTED, BookStatus.DOWNLOAD_QUEUED, BookStatus.DOWNLOAD_ACTIVE},
                     'upload': {
                         BookStatus.DOWNLOAD_COMPLETE, BookStatus.UPLOAD_QUEUED,
                         BookStatus.UPLOAD_ACTIVE

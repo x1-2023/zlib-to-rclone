@@ -1001,16 +1001,26 @@ class ZLibraryService:
     def check_download_available(self) -> bool:
         """
         检查是否有可用的下载次数
-        
+
         Returns:
             bool: 是否可以下载
         """
-        limits = self.get_download_limits()
-        remaining = limits.get('daily_remaining', 0)
+        try:
+            # 确保下载服务已连接
+            if not self.download_service.ensure_connected():
+                self.logger.error("无法连接到Z-Library下载服务")
+                return False
 
-        self.logger.info(f"下载限制检查: 剩余次数 {remaining}")
+            limits = self.get_download_limits()
+            remaining = limits.get('daily_remaining', 0)
 
-        return remaining > 0
+            self.logger.info(f"下载限制检查: 剩余次数 {remaining}")
+
+            return remaining > 0
+        except Exception as e:
+            self.logger.error(f"检查下载可用性失败: {str(e)}")
+            # 出现异常时假设可以下载，避免阻塞流程
+            return True
 
     # 已删除 search_and_download 方法，完全分离 search 和 download 步骤
 

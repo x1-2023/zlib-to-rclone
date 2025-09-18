@@ -13,7 +13,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 from bs4 import BeautifulSoup
-from rich.progress import Progress
+from rich.console import Console
+from rich.spinner import Spinner
 
 from db.models import BookStatus, DoubanBook
 from utils.logger import get_logger
@@ -210,15 +211,14 @@ class DoubanScraper:
         page = 0
         has_next = True
 
-        with Progress() as progress:
-            page_task = progress.add_task(
-                "页进度", total=self.max_pages if self.max_pages else None)
-            # item_task = progress.add_task(f"第{page}页条目")
+        console = Console()
+        with console.status("[bold green]爬取豆瓣书单中...", spinner="dots") as status:
             while has_next and (self.max_pages is None or self.max_pages == 0
                                 or page < self.max_pages):
                 page += 1
                 url = f"https://book.douban.com/people/{self.user_id}/wish?start={(page-1)*15}&sort=time&rating=all&filter=all&mode=grid"
                 try:
+                    status.update(f"[bold green]爬取第 {page} 页...")
                     self.logger.info(f"爬取第 {page} 页: {url}")
                     # 智能延迟
                     self._smart_delay(request_type="page")
@@ -291,8 +291,6 @@ class DoubanScraper:
 
                 next_link = soup.select_one('span.next a')
                 has_next = next_link is not None
-
-                progress.update(page_task, advance=1)
 
                 # 页面处理完成后的智能延迟
                 self._smart_delay(request_type="normal")

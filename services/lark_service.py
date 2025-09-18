@@ -6,9 +6,8 @@
 """
 
 import json
-import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from larkpy import LarkWebhook
 
@@ -21,7 +20,7 @@ class LarkService:
     def __init__(self, webhook_url: str, secret: Optional[str] = None):
         """
         初始化飞书通知服务
-        
+
         Args:
             webhook_url: 飞书机器人 Webhook URL
             secret: 飞书机器人安全设置中的签名密钥（可选）
@@ -35,11 +34,11 @@ class LarkService:
                                                                 Any]]) -> bool:
         """
         发送卡片消息
-        
+
         Args:
             title: 卡片标题
             elements: 卡片元素列表
-            
+
         Returns:
             bool: 发送是否成功
         """
@@ -65,11 +64,11 @@ class LarkService:
                                     url: str) -> bool:
         """
         发送豆瓣403错误通知
-        
+
         Args:
             error_message: 错误信息
             url: 出错的URL
-            
+
         Returns:
             bool: 发送是否成功
         """
@@ -124,13 +123,13 @@ class LarkService:
             details: Optional[List[Dict[str, Any]]] = None) -> bool:
         """
         发送同步任务摘要
-        
+
         Args:
             total: 总书籍数
             success: 成功下载数
             failed: 失败数
             details: 详细信息列表（可选）
-            
+
         Returns:
             bool: 发送是否成功
         """
@@ -157,7 +156,6 @@ class LarkService:
 
         # 如果有详细信息，添加到卡片中
         if details and len(details) > 0:
-            elements.append({"tag": "hr"})
 
             elements.append({
                 "tag": "div",
@@ -175,7 +173,8 @@ class LarkService:
                         "tag":
                         "lark_md",
                         "content":
-                        f"{i+1}. {detail.get('title', '未知')} - {detail.get('status', '未知')}"
+                        (f"{i+1}. {detail.get('title', '未知')} - "
+                         f"{detail.get('status', '未知')}")
                     }
                 })
 
@@ -205,13 +204,105 @@ class LarkService:
         title = "📊 豆瓣同步任务摘要"
         return self.send_card_message(title, elements)
 
+    def send_download_start_notification(
+            self,
+            book_title: str,
+            publisher: Optional[str] = None,
+            file_format: Optional[str] = None,
+            file_size: Optional[str] = None,
+            download_url: Optional[str] = None,
+            zlibrary_info_url: Optional[str] = None) -> bool:
+        """
+        发送下载开始通知
+
+        Args:
+            book_title: 书名
+            publisher: 出版商
+            file_format: 文件格式
+            file_size: 文件大小
+            download_url: 下载URL
+            zlibrary_info_url: Z-Library信息页URL
+
+        Returns:
+            bool: 发送是否成功
+        """
+        # 构建卡片元素
+        elements = [{
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": f"📖 **书名**: {book_title}"
+            }
+        }]
+
+        # 添加出版商信息（如果有）
+        if publisher:
+            elements.append({
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": f"🏢 **出版商**: {publisher}"
+                }
+            })
+
+        # 添加文件信息
+        file_info_parts = []
+        if file_format:
+            file_info_parts.append(f"**格式**: {file_format.upper()}")
+        if file_size:
+            file_info_parts.append(f"**大小**: {file_size}")
+
+        if file_info_parts:
+            elements.append({
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": f"📄 {' | '.join(file_info_parts)}"
+                }
+            })
+
+        # 添加链接信息
+        if zlibrary_info_url:
+            elements.append({
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": f"🔗 [Z-Library信息页]({zlibrary_info_url})"
+                }
+            })
+
+        if download_url:
+            elements.append({
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": f"⬇️ [下载链接]({download_url})"
+                }
+            })
+
+        # 添加时间信息
+        elements.append({
+            "tag":
+            "note",
+            "elements": [{
+                "tag":
+                "plain_text",
+                "content":
+                f"开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            }]
+        })
+
+        # 发送卡片消息
+        title = "📥 开始下载书籍"
+        return self.send_card_message(title, elements)
+
     def _send_message(self, message: Dict[str, Any]) -> bool:
         """
         发送消息到飞书
-        
+
         Args:
             message: 消息内容
-            
+
         Returns:
             bool: 发送是否成功
         """

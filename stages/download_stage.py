@@ -17,32 +17,36 @@ from core.quota_manager import QuotaManager
 from db.models import (BookStatus, DoubanBook, DownloadQueue, DownloadRecord,
                        ZLibraryBook)
 from services.zlibrary_service import ZLibraryService
+from services.lark_service import LarkService
 
 
 class DownloadStage(BaseStage):
     """下载处理阶段"""
-    
+
     def __init__(
-        self, 
-        state_manager: BookStateManager, 
+        self,
+        state_manager: BookStateManager,
         zlibrary_service: ZLibraryService,
         quota_manager: Optional[QuotaManager] = None,
-        download_dir: str = "data/downloads"
+        download_dir: str = "data/downloads",
+        lark_service: Optional[LarkService] = None
     ):
         """
         初始化下载阶段
-        
+
         Args:
             state_manager: 状态管理器
             zlibrary_service: Z-Library服务实例
             quota_manager: 配额管理器（可选，用于配额感知处理）
             download_dir: 下载目录
+            lark_service: 飞书通知服务（可选）
         """
         super().__init__("download", state_manager)
         self.zlibrary_service = zlibrary_service
         self.quota_manager = quota_manager
         self.download_dir = Path(download_dir)
-        
+        self.lark_service = lark_service
+
         # 确保下载目录存在
         os.makedirs(self.download_dir, exist_ok=True)
     
@@ -67,33 +71,59 @@ class DownloadStage(BaseStage):
             self.logger.info(f"检查书籍处理能力: {book.title}, 数据库状态: {current_status.value}, 传入状态: {book.status.value}")
             
             # 检查书籍状态是否符合处理条件
-            # 接受DOWNLOAD_QUEUED和DOWNLOAD_ACTIVE状态的书籍
-            if current_status not in [BookStatus.DOWNLOAD_QUEUED, BookStatus.DOWNLOAD_ACTIVE]:
+            # 接受SEARCH_COMPLETE、SEARCH_COMPLETE_QUOTA_EXHAUSTED、DOWNLOAD_QUEUED和DOWNLOAD_ACTIVE状态的书籍
+            acceptable_statuses = [
+                BookStatus.SEARCH_COMPLETE,
+                BookStatus.SEARCH_COMPLETE_QUOTA_EXHAUSTED,
+                BookStatus.DOWNLOAD_QUEUED,
+                BookStatus.DOWNLOAD_ACTIVE
+            ]
+            if current_status not in acceptable_statuses:
                 self.logger.warning(f"无法处理书籍: {book.title}, 状态: {current_status.value}")
                 return False
                 
             # 检查下载队列中是否有该书籍的待处理项
+            # 对于SEARCH_COMPLETE状态的书籍，如果队列项是failed状态，需要重置为queued以便重试
             queue_item = session.query(DownloadQueue).filter(
-                DownloadQueue.douban_book_id == book.id,
-                DownloadQueue.status == 'queued'
+                DownloadQueue.douban_book_id == book.id
             ).first()
-            
-            has_queued_item = queue_item is not None
-            self.logger.info(f"下载队列检查: {book.title}, 队列中有待处理项: {has_queued_item}")
-            
-            if not has_queued_item:
+
+            if not queue_item:
+                self.logger.warning(f"下载队列中未找到书籍: {book.title}")
                 return False
-            
+
+            # 如果是SEARCH_COMPLETE状态的书籍，且队列项是failed状态，重置为queued状态以便重试
+            if current_status == BookStatus.SEARCH_COMPLETE and queue_item.status == 'failed':
+                self.logger.info(f"重置失败的下载队列项为待处理: {book.title}")
+                queue_item.status = 'queued'
+                queue_item.error_message = None  # 清除之前的错误信息
+                session.add(queue_item)
+                # commit会在外层的get_session上下文管理器中处理
+
+            # 检查队列项状态是否允许处理
+            if queue_item.status not in ['queued', 'downloading']:
+                self.logger.info(f"下载队列项状态不允许处理: {book.title}, 队列状态: {queue_item.status}")
+                return False
+
+            self.logger.info(f"下载队列检查通过: {book.title}, 队列状态: {queue_item.status}")
+
             # 检查Z-Library下载限制
-            if not self.zlibrary_service.check_download_available():
+            available = self.zlibrary_service.check_download_available()
+            self.logger.info(f"Z-Library下载可用性检查: {book.title}, 结果: {available}")
+
+            if not available:
                 limits = self.zlibrary_service.get_download_limits()
+                remaining = limits.get('daily_remaining', 0)
                 reset_time = limits.get('daily_reset', '未知')
-                self.logger.warning(f"Z-Library下载次数不足，暂停下载阶段，重置时间: {reset_time}")
-                
-                # 回退所有下载相关状态的书籍到搜索完成状态
-                rollback_count = self.state_manager.rollback_download_tasks_when_limit_exhausted(reset_time)
-                self.logger.info(f"下载次数不足，已回退 {rollback_count} 本书籍状态到搜索完成")
-                
+                self.logger.warning(f"Z-Library下载次数不足(剩余:{remaining})，暂停下载阶段，重置时间: {reset_time}")
+
+                # 只有当剩余次数确实为0时才回退状态
+                if remaining <= 0:
+                    rollback_count = self.state_manager.rollback_download_tasks_when_limit_exhausted(reset_time)
+                    self.logger.info(f"下载次数不足，已回退 {rollback_count} 本书籍状态到搜索完成")
+                else:
+                    self.logger.warning(f"下载检查返回不可用但剩余次数为{remaining}，可能是检查逻辑问题")
+
                 # 不抛出异常，而是返回False表示无法处理，让系统保持当前状态
                 return False
             
@@ -102,35 +132,43 @@ class DownloadStage(BaseStage):
     def process(self, book: DoubanBook) -> bool:
         """
         处理书籍 - 下载文件
-        
+
         Args:
             book: 书籍对象
-            
+
         Returns:
             bool: 处理是否成功
         """
         # 先检查是否可以处理这本书籍
         if not self.can_process(book):
-            raise ProcessingError(f"无法处理书籍: {book.title}, 状态不匹配")
+            error_msg = f"无法处理书籍: {book.title}, 状态: {book.status.value}"
+            self.logger.warning(error_msg)
+            raise ProcessingError(error_msg, "status_mismatch", retryable=True)
         
         try:
             self.logger.info(f"下载书籍: {book.title}")
             
             # 再次检查下载限制（可能在can_process和process之间状态发生变化）
-            if not self.zlibrary_service.check_download_available():
+            available = self.zlibrary_service.check_download_available()
+            if not available:
                 limits = self.zlibrary_service.get_download_limits()
+                remaining = limits.get('daily_remaining', 0)
                 reset_time = limits.get('daily_reset', '未知')
-                self.logger.warning(f"Z-Library下载次数不足，暂停下载阶段，重置时间: {reset_time}")
-                
-                # 回退所有下载相关状态的书籍到搜索完成状态
-                rollback_count = self.state_manager.rollback_download_tasks_when_limit_exhausted(reset_time)
-                self.logger.info(f"下载次数不足，已回退 {rollback_count} 本书籍状态到搜索完成")
-                
-                # 抛出非重试性异常，让任务调度器正确处理
-                raise DownloadLimitExhaustedError(
-                    f"Z-Library下载次数不足，重置时间: {reset_time}", 
-                    reset_time=reset_time
-                )
+                self.logger.warning(f"Z-Library下载次数不足(剩余:{remaining})，暂停下载阶段，重置时间: {reset_time}")
+
+                # 只有当剩余次数确实为0时才回退状态和抛出异常
+                if remaining <= 0:
+                    rollback_count = self.state_manager.rollback_download_tasks_when_limit_exhausted(reset_time)
+                    self.logger.info(f"下载次数不足，已回退 {rollback_count} 本书籍状态到搜索完成")
+
+                    # 抛出非重试性异常，让任务调度器正确处理
+                    raise DownloadLimitExhaustedError(
+                        f"Z-Library下载次数不足，重置时间: {reset_time}",
+                        reset_time=reset_time
+                    )
+                else:
+                    self.logger.warning(f"下载检查返回不可用但剩余次数为{remaining}，继续尝试下载")
+                    # 继续执行下载流程
             
             # 检查是否已有成功的下载记录
             with self.state_manager.get_session() as session:
@@ -292,15 +330,30 @@ class DownloadStage(BaseStage):
     def _download_book(self, book: DoubanBook, queue_item_data: Dict[str, Any]) -> Optional[str]:
         """
         下载书籍文件
-        
+
         Args:
-            book: 豆瓣书籍对象  
+            book: 豆瓣书籍对象
             queue_item_data: 队列项数据字典
-            
+
         Returns:
             Optional[str]: 下载的文件路径
         """
         try:
+            # 发送下载开始通知
+            if self.lark_service:
+                try:
+                    self.lark_service.send_download_start_notification(
+                        book_title=book.title or queue_item_data.get('title', '未知书名'),
+                        publisher=book.publisher,
+                        file_format=queue_item_data.get('extension'),
+                        file_size=queue_item_data.get('size'),
+                        download_url=queue_item_data.get('download_url'),
+                        zlibrary_info_url=queue_item_data.get('url')
+                    )
+                    self.logger.info(f"已发送下载开始通知: {book.title}")
+                except Exception as e:
+                    self.logger.warning(f"发送下载开始通知失败: {str(e)}")
+
             # 构造book_info用于下载
             book_info = {
                 'zlibrary_id': queue_item_data['zlibrary_id'],
