@@ -139,11 +139,8 @@ class DownloadStage(BaseStage):
         Returns:
             bool: 处理是否成功
         """
-        # 先检查是否可以处理这本书籍
-        if not self.can_process(book):
-            error_msg = f"无法处理书籍: {book.title}, 状态: {book.status.value}"
-            self.logger.warning(error_msg)
-            raise ProcessingError(error_msg, "status_mismatch", retryable=True)
+        # 注意：can_process检查已经在pipeline层面完成，这里不需要重复检查
+        # 如果到达这里，说明书籍已经通过了can_process验证
         
         try:
             self.logger.info(f"下载书籍: {book.title}")

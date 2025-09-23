@@ -139,6 +139,10 @@ class SearchStage(BaseStage):
 
                 if existing_results > 0:
                     self.logger.info(f"书籍已有Z-Library搜索结果: {book.title}")
+                    # 检查是否有符合阈值的结果并成功添加到下载队列
+                    queue_added = self._add_best_match_to_queue(book)
+                    # 设置标志位，用于决定下一状态
+                    self._found_qualifying_results = queue_added
                     return True
 
             # 执行搜索

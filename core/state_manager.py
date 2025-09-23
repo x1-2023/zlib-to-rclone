@@ -893,7 +893,15 @@ class BookStateManager:
                 if next_stage == "search":
                     next_queued_status = BookStatus.SEARCH_QUEUED
                 elif next_stage == "download":
-                    next_queued_status = BookStatus.DOWNLOAD_QUEUED
+                    # 对于下载阶段，检查是否有下载队列记录
+                    has_download_queue = self._check_download_queue_exists(book_id)
+                    if has_download_queue:
+                        next_queued_status = BookStatus.DOWNLOAD_QUEUED
+                    else:
+                        # 没有下载队列，说明搜索无结果，将状态改为SEARCH_NO_RESULTS
+                        self.logger.info(f"书籍ID {book_id} 没有下载队列记录，将状态转换为SEARCH_NO_RESULTS")
+                        self._update_status_to_no_results(book_id, current_status)
+                        return
                 elif next_stage == "upload":
                     next_queued_status = BookStatus.UPLOAD_QUEUED
 
@@ -1068,3 +1076,55 @@ class BookStateManager:
             return 0
         
         return rollback_count
+
+    def _check_download_queue_exists(self, book_id: int) -> bool:
+        """
+        检查书籍是否有下载队列记录
+
+        Args:
+            book_id: 书籍ID
+
+        Returns:
+            bool: 是否存在下载队列记录
+        """
+        try:
+            from db.models import DownloadQueue
+            with self.get_session() as session:
+                queue = session.query(DownloadQueue).filter(
+                    DownloadQueue.douban_book_id == book_id
+                ).first()
+                return queue is not None
+        except Exception as e:
+            self.logger.error(f"检查下载队列失败: {str(e)}")
+            return False
+
+    def _update_status_to_no_results(self, book_id: int, current_status: BookStatus):
+        """
+        将书籍状态更新为SEARCH_NO_RESULTS
+
+        Args:
+            book_id: 书籍ID
+            current_status: 当前状态
+        """
+        try:
+            with self.get_session() as session:
+                book = session.get(DoubanBook, book_id)
+                if book and book.status == current_status:
+                    old_status = book.status
+                    book.status = BookStatus.SEARCH_NO_RESULTS
+                    book.updated_at = datetime.now()
+
+                    # 创建状态历史记录
+                    history = BookStatusHistory(
+                        book_id=book_id,
+                        old_status=old_status,
+                        new_status=BookStatus.SEARCH_NO_RESULTS,
+                        change_reason="没有找到可下载的搜索结果"
+                    )
+                    session.add(history)
+
+                    self.logger.info(
+                        f"状态转换: {book_id} {old_status.value} -> {BookStatus.SEARCH_NO_RESULTS.value} 没有搜索结果"
+                    )
+        except Exception as e:
+            self.logger.error(f"更新状态为SEARCH_NO_RESULTS失败: {str(e)}")
