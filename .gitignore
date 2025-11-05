@@ -7,5 +7,27 @@ test*
 logs/
 # *.db.backup*
 data/downloads/
+downloads/
 
 .venv
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment variables
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backup files
+*.backup
+*.bak

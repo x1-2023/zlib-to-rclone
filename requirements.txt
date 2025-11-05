@@ -46,3 +46,6 @@ python-dateutil
 fuzzy-match  # 模糊匹配算法
 tqdm  # 进度条
 rich  # 富文本终端库
+
+# Discord Bot
+discord.py>=2.0.0  # Discord bot library

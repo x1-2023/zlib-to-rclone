@@ -1,0 +1,150 @@
+# ===================================================================
+# File cấu hình cho công cụ đồng bộ sách Douban - Z-Library - Calibre
+# ===================================================================
+
+# ===== CẤU HÌNH DOUBAN (Trang web sách Trung Quốc) =====
+douban:
+  # Cookie của Douban - dùng để truy cập danh sách sách "muốn đọc" của bạn
+  # 
+  # Cách lấy Cookie:
+  # 1. Đăng nhập vào https://book.douban.com
+  # 2. Nhấn F12 để mở Developer Tools
+  # 3. Vào tab "Application" > "Cookies" > "https://book.douban.com"
+  # 4. Copy toàn bộ cookie, ví dụ: "bid=xxxx; dbcl2=xxxx; push_noty_num=0"
+  cookie: "bid=xxxx; dbcl2=xxxx; push_noty_num=0; push_doumail_num=0"
+  
+  # URL danh sách "muốn đọc" của bạn
+  # Mặc định: danh sách của tài khoản hiện tại
+  wishlist_url: "https://book.douban.com/people/me/wish"
+  
+  # Giới hạn số trang cần lấy
+  # 0 = lấy tất cả các trang
+  # 5 = chỉ lấy 5 trang đầu
+  max_pages: 0
+
+# ===== CẤU HÌNH CƠ SỞ DỮ LIỆU =====
+database:
+  # Loại database: "sqlite" hoặc "postgresql"
+  # Khuyên dùng sqlite cho đơn giản
+  type: "sqlite"
+  
+  # Đường dẫn file database SQLite (chỉ dùng khi type="sqlite")
+  path: "data/books.db"
+  
+  # Cấu hình PostgreSQL (chỉ dùng khi type="postgresql")
+  host: "localhost"
+  port: 5432
+  dbname: "douban_books"
+  username: "postgres"
+  password: "password"
+
+# ===== CẤU HÌNH CALIBRE (Phần mềm quản lý sách điện tử) =====
+calibre:
+  # URL của Calibre Content Server
+  # Cần khởi động server bằng lệnh: calibre-server --port=8080 [đường-dẫn-thư-viện]
+  content_server_url: "http://localhost:8080"
+  
+  # Tên đăng nhập Calibre Content Server
+  username: "admin"
+  
+  # Mật khẩu Calibre Content Server
+  password: "password"
+  
+  # Ngưỡng khớp sách (0.0 - 1.0)
+  # Càng cao = yêu cầu khớp càng chính xác
+  # 0.6 = khớp 60% thông tin (tên sách, tác giả, nhà xuất bản...)
+  match_threshold: 0.6
+
+# ===== CẤU HÌNH Z-LIBRARY (Trang download sách miễn phí) =====
+# ⚠️ QUAN TRỌNG: Phải có tài khoản Z-Library để download sách
+zlibrary:
+  # Email đăng ký tài khoản Z-Library
+  # Đăng ký tại: https://z-library.se (hoặc các mirror khác)
+  username: "your_email@example.com"
+  
+  # Mật khẩu tài khoản Z-Library
+  password: "your_password"
+  
+  # Thứ tự ưu tiên định dạng file khi download
+  # Sẽ thử download theo thứ tự này: epub trước, không có thì mobi, rồi azw3, cuối cùng pdf
+  format_priority: ["epub", "mobi", "azw3", "pdf"]
+  
+  # Thư mục lưu file download về
+  download_dir: "data/downloads"
+  
+  # Số lần thử lại tối đa khi download thất bại
+  max_retries: 3
+  
+  # Thứ tự ưu tiên ngôn ngữ sách
+  # Tìm sách tiếng Trung trước, không có thì tiếng Anh
+  language_priority:
+    - Chinese
+    - English
+  
+  # Danh sách proxy (nếu cần)
+  # Ví dụ: dùng Tor Browser proxy qua cổng 9050
+  # Để trống [] nếu không dùng proxy
+  proxy_list:
+    - "socks5://127.0.0.1:9050"
+
+# ===== CẤU HÌNH LỊCH TRÌNH TỰ ĐỘNG =====
+schedule:
+  # Thời gian chạy tự động mỗi ngày (định dạng 24 giờ)
+  # "03:00" = 3 giờ sáng mỗi ngày
+  time: "03:00"
+  
+  # Có chạy ngay khi khởi động chương trình không?
+  # true = chạy luôn khi start
+  # false = chờ đến giờ đã định
+  run_at_startup: false
+  
+  # Khoảng thời gian thử lại khi thất bại (đơn vị: phút)
+  retry_interval: 60
+
+# ===== CẤU HÌNH THÔNG BÁO LARK/FEISHU (Tùy chọn) =====
+lark:
+  # URL webhook của bot Lark/Feishu
+  # Để nhận thông báo về quá trình download
+  # Cách tạo webhook: vào Lark > Bot > Custom Bot > Copy webhook URL
+  webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+  
+  # Bật/tắt thông báo
+  enabled: true
+  
+  # Mức độ thông báo:
+  # "all" = thông báo tất cả
+  # "success" = chỉ thông báo khi thành công
+  # "error" = chỉ thông báo khi có lỗi
+  level: "all"
+
+# ===== CẤU HÌNH LOG (Nhật ký hoạt động) =====
+logging:
+  # Mức độ chi tiết log:
+  # DEBUG = rất chi tiết (dùng khi debug)
+  # INFO = thông tin chung (khuyên dùng)
+  # WARNING = chỉ cảnh báo
+  # ERROR = chỉ lỗi
+  # CRITICAL = chỉ lỗi nghiêm trọng
+  level: "INFO"
+  
+  # Đường dẫn file log
+  file: "logs/app.log"
+  
+  # Có hiển thị log ra console không?
+  console: true
+  
+  # Giữ log bao nhiêu ngày (log cũ sẽ bị xóa)
+  retention_days: 30
+
+# ===== CẤU HÌNH HỆ THỐNG =====
+system:
+  # Thư mục lưu file tạm
+  temp_dir: "data/temp"
+  
+  # Bật chế độ debug không?
+  # true = chạy chậm hơn nhưng log nhiều thông tin hơn
+  debug: false
+  
+  # Chuỗi User-Agent (giả lập trình duyệt)
+  # Dùng để web không chặn bot
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
