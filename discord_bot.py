@@ -300,61 +300,40 @@ class BookDownloader:
                     'error': 'URL không hợp lệ. Vui lòng cung cấp URL từ Z-Library'
                 }
             
-            # Get book ID
-            book_id = book_info['id']
-            logger.info(f"Getting book info for ID: {book_id}")
-            
-            # Use zlibrary lib to get fresh download URL
-            # IMPORTANT: get_by_id() doesn't work reliably - use search instead!
-            try:
-                # Search by book ID to get the book with proper download_url
-                logger.info(f"Searching for book ID {book_id}...")
-                search_results = self.zlibrary_service.search_books(title=f"zlibid:{book_id}")
-                
-                if not search_results:
-                    # Fallback: Try searching without zlibid prefix
-                    logger.warning(f"No results with zlibid: prefix, trying direct ID search")
-                    search_results = self.zlibrary_service.search_books(title=book_id)
-                
-                if not search_results:
-                    logger.error(f"Could not find book with ID {book_id}")
-                    return {
-                        'success': False,
-                        'error': f'Không tìm thấy sách với ID {book_id} trên Z-Library'
-                    }
-                
-                # Get first result (should be exact match)
-                book_details = search_results[0]
-                
-                # Extract download_url
-                download_url = book_details.get('download_url')
-                if not download_url:
-                    logger.error(f"Book details missing download_url: {book_details.keys()}")
-                    return {
-                        'success': False,
-                        'error': 'Sách không có link download'
-                    }
-                
-                title = book_details.get('title', f'Book_{book_id}')
-                
-                logger.info(f"Got fresh download_url from search: {download_url}")
-                
-            except Exception as e:
-                logger.error(f"Error getting download_url from zlibrary lib: {e}")
-                import traceback
-                traceback.print_exc()
+            # Check if this is a direct download link or book page
+            if book_info['type'] == 'book_page':
                 return {
                     'success': False,
-                    'error': f'Lỗi khi lấy thông tin sách: {str(e)}'
+                    'error': '❌ Vui lòng dùng direct download link!\n\n' +
+                            '📖 Cách lấy link:\n' +
+                            '1. Mở trang sách trên Z-Library\n' +
+                            '2. Click nút download (PDF/EPUB/...)\n' +
+                            '3. Copy URL từ nút download đó\n' +
+                            '4. Paste vào bot\n\n' +
+                            '✅ Link đúng: https://z-library.xx/dl/123456/abc123\n' +
+                            '❌ Link sai: https://z-library.xx/book/123456/...'
                 }
+            
+            # Extract download info from direct link
+            book_id = book_info['id']
+            download_hash = book_info['hash']
+            domain = book_info['domain']
+            
+            logger.info(f"Direct download link: ID={book_id}, hash={download_hash}")
+            
+            # Construct full download URL
+            download_url = f"https://{domain}/dl/{book_id}/{download_hash}"
+            title = f"Book_{book_id}"
+            
+            logger.info(f"Using download URL: {download_url}")
             
             # Chuẩn bị book_info cho service
             book_data = {
                 'zlibrary_id': book_id,
                 'title': title,
-                'authors': book_details.get('authors', 'Unknown'),
+                'authors': 'Unknown',
                 'download_url': download_url,
-                'extension': book_details.get('extension', 'pdf'),
+                'extension': 'pdf',  # Will be detected from download response
                 'url': url
             }
             logger.info(f"Downloading book ID: {book_info['id']} (using zlibrary service authenticated session)")
@@ -814,12 +793,14 @@ async def slash_help(interaction: discord.Interaction):
     )
     
     embed.add_field(
-        name="🔗 Supported URLs",
+        name="🔗 Cách Lấy Direct Download Link",
         value=(
-            "**Hỗ trợ domain:** .ec, .se, .is, .sk\n"
-            "**Ví dụ:**\n"
-            "• `https://z-library.ec/book/11948830/2c2f55`\n"
-            "• `https://z-library.ec/dl/11948830/b88232` (direct)"
+            "**Bước 1:** Mở trang sách trên Z-Library\n"
+            "**Bước 2:** Click chuột phải vào nút download (PDF/EPUB/...)\n"
+            "**Bước 3:** Copy link address\n"
+            "**Bước 4:** Paste vào bot\n\n"
+            "✅ **Link đúng:** `https://z-library.xx/dl/123456/abc123`\n"
+            "❌ **Link sai:** `https://z-library.xx/book/123456/...`"
         ),
         inline=False
     )
