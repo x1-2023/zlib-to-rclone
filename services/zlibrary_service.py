@@ -463,8 +463,8 @@ class ZLibrarySearchService:
                           author: str = None,
                           isbn: str = None,
                           publisher: str = None) -> str:
-        """构建ISBN搜索查询"""
-        return f"isbn:{isbn.strip()}"
+        """构建ISBN搜索查询 - Plain ISBN works, 'isbn:' prefix doesn't!"""
+        return isbn.strip()  # Just the ISBN number, no prefix!
 
     def _build_full_query(self,
                           title: str = None,
