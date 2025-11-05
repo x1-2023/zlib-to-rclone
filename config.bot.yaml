@@ -66,6 +66,13 @@ logging:
   console: true
   retention_days: 30
 
+# Discord Bot Configuration (IMPORTANT - FILL IN YOUR BOT TOKEN)
+discord:
+  # ⚠️ CHANGE THIS: Your Discord bot token
+  token: "YOUR_DISCORD_BOT_TOKEN_HERE"
+  # Temporary directory for bot downloads
+  temp_dir: "data/temp"
+
 # System Configuration
 system:
   temp_dir: "data/temp"

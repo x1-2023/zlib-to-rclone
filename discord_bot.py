@@ -29,7 +29,17 @@ from utils.logger import setup_logger, get_logger
 import logging
 
 # ===== CẤU HÌNH =====
-DISCORD_TOKEN = "YOUR_DISCORD_BOT_TOKEN"  # Token Discord Bot
+# Load config first to get Discord token
+try:
+    config_manager = ConfigManager("config.yaml")
+    discord_config = config_manager.config.get('discord', {})
+    DISCORD_TOKEN = discord_config.get('token', 'YOUR_DISCORD_BOT_TOKEN')
+    TEMP_DIR = discord_config.get('temp_dir', 'data/temp')
+except Exception as e:
+    print(f"⚠️ Error loading config: {e}")
+    DISCORD_TOKEN = "YOUR_DISCORD_BOT_TOKEN"
+    TEMP_DIR = "data/temp"
+
 RCLONE_REMOTE = "discord"  # ← SỬA: Tên remote trong rclone config
 RCLONE_FOLDER = "ZLibrary-Books"  # Folder trên Google Drive
 DOWNLOAD_DIR = "data/downloads/discord"  # Thư mục download tạm

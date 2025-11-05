@@ -108,6 +108,10 @@ class ZLibrarySearchService:
                     self.logger.info(
                         f'开始登陆Zlibrary (尝试 {attempt}/{max_retries})')
                     self.lib = zlibrary.AsyncZlib(proxy_list=self.proxy_list)
+                    # Force use .ec domain instead of default .sk
+                    self.lib.domain = 'https://z-library.ec/'
+                    self.lib.login_domain = 'https://z-library.ec/rpc.php'
+                    self.logger.info(f'Setting zlibrary domain to: {self.lib.domain}')
                     asyncio.run(self.lib.login(self.__email, self.__password))
                     self.logger.info('Zlibrary登录成功')
                 # 无论是新创建连接还是已有连接，都应该返回True
@@ -566,6 +570,10 @@ class ZLibraryDownloadService:
                     self.logger.info(
                         f'开始登陆Zlibrary (尝试 {attempt}/{max_retries})')
                     self.lib = zlibrary.AsyncZlib(proxy_list=self.proxy_list)
+                    # Force use .ec domain instead of default .sk
+                    self.lib.domain = 'https://z-library.ec/'
+                    self.lib.login_domain = 'https://z-library.ec/rpc.php'
+                    self.logger.info(f'Setting zlibrary domain to: {self.lib.domain}')
                     asyncio.run(self.lib.login(self.__email, self.__password))
                     self.logger.info('Zlibrary登录成功')
                 # 无论是新创建连接还是已有连接，都应该返回True
