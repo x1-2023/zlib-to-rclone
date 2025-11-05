@@ -677,9 +677,17 @@ class ZLibraryDownloadService:
 
                 self.logger.info(f"使用链接下载: {download_url}")
 
-                headers['Cookie'] = "; ".join(
-                    [f"{k}={v}" for k, v in self.lib.cookies.items()] +
-                    ["switchLanguage=zh", "siteLanguage=zh"])
+                # Use cookies from book_info if provided (from discord bot)
+                # Otherwise use self.lib.cookies
+                cookies_to_use = book_info.get('cookies', self.lib.cookies if self.lib else {})
+                
+                if cookies_to_use:
+                    headers['Cookie'] = "; ".join(
+                        [f"{k}={v}" for k, v in cookies_to_use.items()] +
+                        ["switchLanguage=zh", "siteLanguage=zh"])
+                    self.logger.info(f"Using {len(cookies_to_use)} cookies for authenticated download")
+                else:
+                    self.logger.warning("No cookies available, download may fail")
 
                 # 配置代理
                 proxies = None
