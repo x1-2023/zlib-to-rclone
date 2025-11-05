@@ -290,41 +290,59 @@ class BookDownloader:
                     'error': 'URL không hợp lệ. Vui lòng cung cấp URL từ Z-Library'
                 }
             
-            # Lấy domain từ URL gốc
-            domain = book_info.get('domain', 'z-library.ec')
+            # Get book ID
+            book_id = book_info['id']
+            logger.info(f"Getting book info for ID: {book_id}")
             
-            # Nếu là direct download link
-            if book_info['type'] == 'direct_download':
-                download_url = url
-                title = f"Book_{book_info['id']}"
-            else:
-                # Nếu là book page, cần parse HTML để lấy hash thật
-                logger.info(f"Book page detected, fetching real download hash...")
-                real_hash = await self._get_download_hash_from_page(url)
+            # Use zlibrary lib to get fresh download URL (hash expires!)
+            # This uses the AsyncZlib.get_by_id() method
+            try:
+                # Get AsyncZlib instance from search service
+                lib = self.zlibrary_service.search_service.lib
                 
-                if real_hash:
-                    # Dùng hash thật từ download button
-                    download_url = f"https://{domain}/dl/{book_info['id']}/{real_hash}"
-                    title = f"Book_{book_info['id']}"
-                    logger.info(f"Using real download hash: {download_url}")
-                else:
-                    # Fallback: thử dùng hash từ URL (có thể không work)
-                    download_url = f"https://{domain}/dl/{book_info['id']}/{book_info['hash']}"
-                    title = f"Book_{book_info['id']}"
-                    logger.warning(f"Could not get real hash, using URL hash (may fail): {download_url}")
+                # Fetch book details with download_url using get_by_id
+                logger.info(f"Fetching book details from zlibrary lib...")
+                book_details = asyncio.run(lib.get_by_id(book_id))
+                
+                if not book_details:
+                    logger.error(f"Could not get book details from zlibrary lib")
+                    return {
+                        'success': False,
+                        'error': 'Không thể lấy thông tin sách từ Z-Library'
+                    }
+                
+                # Extract download_url
+                download_url = book_details.get('download_url')
+                if not download_url:
+                    logger.error(f"Book details missing download_url: {book_details.keys()}")
+                    return {
+                        'success': False,
+                        'error': 'Sách không có link download'
+                    }
+                
+                title = book_details.get('name', f'Book_{book_id}')
+                
+                logger.info(f"Got fresh download_url: {download_url}")
+                
+            except Exception as e:
+                logger.error(f"Error getting download_url from zlibrary lib: {e}")
+                import traceback
+                traceback.print_exc()
+                return {
+                    'success': False,
+                    'error': f'Lỗi khi lấy thông tin sách: {str(e)}'
+                }
             
             # Chuẩn bị book_info cho service
             book_data = {
-                'zlibrary_id': book_info['id'],
+                'zlibrary_id': book_id,
                 'title': title,
-                'authors': 'Unknown',
+                'authors': book_details.get('authors', 'Unknown'),
                 'download_url': download_url,
-                'extension': 'pdf',  # Default, sẽ được update từ response
+                'extension': book_details.get('extension', 'pdf'),
                 'url': url
             }
-            
-            # Download file
-            logger.info(f"Downloading từ: {download_url}")
+            logger.info(f"Downloading book ID: {book_info['id']} (using zlibrary service authenticated session)")
             file_path = self.zlibrary_service.download_book(book_data, DOWNLOAD_DIR)
             
             if not file_path or not os.path.exists(file_path):
