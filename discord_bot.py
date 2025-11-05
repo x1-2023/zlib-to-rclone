@@ -199,8 +199,25 @@ class BookDownloader:
             from bs4 import BeautifulSoup
             
             logger.info(f"Fetching book page: {book_page_url}")
-            response = requests.get(book_page_url, timeout=10)
+            
+            # Add proper headers to mimic browser
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1'
+            }
+            
+            response = requests.get(book_page_url, headers=headers, timeout=10)
             response.raise_for_status()
+            
+            # Debug: Save HTML to file for inspection
+            debug_html_path = "data/temp/debug_page.html"
+            os.makedirs(os.path.dirname(debug_html_path), exist_ok=True)
+            with open(debug_html_path, 'w', encoding='utf-8') as f:
+                f.write(response.text)
+            logger.info(f"Saved HTML to {debug_html_path} for debugging")
             
             soup = BeautifulSoup(response.content, 'html.parser')
             
@@ -210,9 +227,17 @@ class BookDownloader:
             
             download_link = None
             if download_links:
+                logger.info(f"Found {len(download_links)} download button(s)")
+                # Debug: Log all found links
+                for i, link in enumerate(download_links):
+                    href = link.get('href')
+                    format_span = link.find('span', class_='book-property__extension')
+                    fmt = format_span.text.strip() if format_span else 'unknown'
+                    logger.info(f"  Button {i+1}: {href} (format: {fmt})")
+                
                 # Take the first one (primary format)
                 download_link = download_links[0]
-                logger.info(f"Found {len(download_links)} download button(s), using first one")
+                logger.info(f"Using first button")
             
             if not download_link:
                 # Method 2: Find any <a> with href matching /dl/{id}/{hash}
