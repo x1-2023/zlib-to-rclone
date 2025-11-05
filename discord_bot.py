@@ -662,7 +662,9 @@ class BookDownloader:
                     logger.info(f"✅ BEST MATCH: ID={found_book_id}, Title='{best_match['title'][:50]}', Format={best_match['format']}, Score={best_score}")
                     
                 except Exception as e:
+                    import traceback
                     logger.error(f"Error searching web for ISBN: {e}")
+                    logger.error(f"Traceback: {traceback.format_exc()}")
                     return {
                         'success': False,
                         'error': f'❌ Lỗi khi search ISBN: {str(e)}'
