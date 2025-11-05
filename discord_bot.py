@@ -682,6 +682,29 @@ async def slash_set_credentials(interaction: discord.Interaction, email: str, pa
         )
 
 
+@bot.tree.command(name="version", description="📦 Kiểm tra version code bot")
+async def slash_version(interaction: discord.Interaction):
+    """Slash command: /version - Check bot version"""
+    try:
+        import subprocess
+        # Get git commit hash
+        commit = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD']).decode('ascii').strip()
+        # Get git commit date
+        commit_date = subprocess.check_output(['git', 'log', '-1', '--format=%cd', '--date=short']).decode('ascii').strip()
+        
+        embed = discord.Embed(
+            title="📦 Bot Version Info",
+            color=discord.Color.blue()
+        )
+        embed.add_field(name="Git Commit", value=f"`{commit}`", inline=True)
+        embed.add_field(name="Commit Date", value=commit_date, inline=True)
+        embed.add_field(name="Status", value="✅ Running with HTML parsing fix", inline=False)
+        
+        await interaction.response.send_message(embed=embed)
+    except Exception as e:
+        await interaction.response.send_message(f"⚠️ Cannot get version: {str(e)}")
+
+
 @bot.tree.command(name="ping", description="🏓 Kiểm tra bot có hoạt động không")
 async def slash_ping(interaction: discord.Interaction):
     """Slash command: /ping"""
