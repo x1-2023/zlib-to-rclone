@@ -311,9 +311,11 @@ class BookDownloader:
                 lib = self.zlibrary_service.search_service.lib
                 
                 # Force .ec domain (must set every time as library might reset)
+                # IMPORTANT: get_by_id() uses lib.mirror, not lib.domain!
                 lib.domain = 'https://z-library.ec/'
                 lib.login_domain = 'https://z-library.ec/rpc.php'
-                logger.info(f"Using zlibrary domain: {lib.domain}")
+                lib.mirror = 'https://z-library.ec'  # No trailing slash for mirror!
+                logger.info(f"Using zlibrary mirror: {lib.mirror}")
                 
                 # Fetch book details with download_url using get_by_id
                 logger.info(f"Fetching book details from zlibrary lib...")
