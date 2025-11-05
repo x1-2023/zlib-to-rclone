@@ -677,69 +677,56 @@ class BookDownloader:
                         'error': f'❌ Lỗi khi search ISBN: {str(e)}'
                     }
                 
-                # Step 5: Search with zlibrary API using ISBN to get authenticated download URL
-                # DON'T use z-bookcard download hash - it's from anonymous session!
-                # DON'T use get_by_id() - it fails on .sk domain!
-                # USE search_books(isbn=...) - returns fresh authenticated download_url!
+                # Step 5: Use book data from web scraping + call API to get download URL
+                # We have: book ID, title, author, format from z-bookcard
+                # Now get authenticated download URL using the lib.get_by_id()
                 
-                logger.info(f"Searching with zlibrary API using ISBN: {isbn}")
-                try:
-                    search_results = self.zlibrary_service.search_service.search_books(isbn=isbn)
-                    
-                    if not search_results:
-                        logger.error(f"No results from zlibrary API for ISBN: {isbn}")
-                        return {
-                            'success': False,
-                            'error': f'❌ API không tìm thấy sách với ISBN: {isbn}'
-                        }
-                    
-                    # Find the result matching our book ID
-                    book_details = None
-                    for result in search_results:
-                        result_id = str(result.get('zlibrary_id', ''))
-                        if result_id == str(found_book_id):
-                            book_details = result
-                            logger.info(f"Found matching book in API results: ID={result_id}")
-                            break
-                    
-                    # If exact ID match not found, use first result (should be same book with ISBN)
-                    if not book_details:
-                        logger.warning(f"Exact ID match not found, using first result")
-                        book_details = search_results[0]
-                    
-                    download_url = book_details.get('download_url')
-                    if not download_url:
-                        logger.error("Book found but no download_url in result")
-                        return {
-                            'success': False,
-                            'error': '❌ Sách không có link download'
-                        }
-                    
-                    title = book_details.get('title', best_match.get('title', f'Book_{found_book_id}'))
-                    authors = book_details.get('authors', best_match.get('author', 'Unknown'))
-                    extension = book_details.get('extension', best_match.get('format', 'pdf'))
-                    
-                    logger.info(f"Got authenticated download URL from API: {download_url}")
-                    
-                except Exception as e:
-                    logger.error(f"Failed to search with zlibrary API: {e}")
-                    import traceback
-                    logger.error(f"Traceback: {traceback.format_exc()}")
+                title = best_match.get('title', f'Book_{found_book_id}')
+                authors = best_match.get('author', 'Unknown')
+                extension = best_match.get('format', 'pdf')
+                
+                logger.info(f"Getting download URL for book ID: {found_book_id}")
+                
+                # Use zlibrary lib to get authenticated download URL
+                lib = self.zlibrary_service.search_service.lib
+                
+                async def get_download_url():
+                    try:
+                        # Call get_by_id on .ec domain (not .sk!)
+                        # Force domain to .ec by temporarily changing lib domain
+                        original_domain = lib.domain
+                        lib.domain = "https://z-library.ec"
+                        
+                        book = await lib.get_by_id(str(found_book_id))
+                        
+                        # Restore original domain
+                        lib.domain = original_domain
+                        
+                        return book
+                    except Exception as e:
+                        logger.error(f"get_by_id failed: {e}")
+                        # Restore domain even on error
+                        lib.domain = original_domain
+                        return None
+                
+                book_details = asyncio.run(get_download_url())
+                
+                if not book_details:
+                    logger.error(f"Failed to get book details for ID: {found_book_id}")
                     return {
                         'success': False,
-                        'error': f'❌ Lỗi khi tìm sách qua API: {str(e)}'
+                        'error': f'❌ Không thể lấy thông tin download cho sách ID: {found_book_id}'
                     }
                 
+                download_url = book_details.get('download_url')
                 if not download_url:
+                    logger.error("Book found but no download_url")
                     return {
                         'success': False,
                         'error': '❌ Sách không có link download'
                     }
                 
-                logger.info(f"Got book: {title}")
-                logger.info(f"Got fresh download_url: {download_url}")
-                
-                logger.info(f"Got fresh download_url: {download_url}")
+                logger.info(f"Got authenticated download_url: {download_url}")
                 
             except Exception as e:
                 logger.error(f"Error getting fresh download URL: {e}")
