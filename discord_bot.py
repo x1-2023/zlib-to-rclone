@@ -205,15 +205,26 @@ class BookDownloader:
             soup = BeautifulSoup(response.content, 'html.parser')
             
             # Method 1: Find by class "addDownloadedBook" (most reliable)
-            download_link = soup.find('a', class_='addDownloadedBook')
+            # Priority: Look for primary download button (usually PDF, first format)
+            download_links = soup.find_all('a', class_='addDownloadedBook')
+            
+            download_link = None
+            if download_links:
+                # Take the first one (primary format)
+                download_link = download_links[0]
+                logger.info(f"Found {len(download_links)} download button(s), using first one")
             
             if not download_link:
                 # Method 2: Find any <a> with href matching /dl/{id}/{hash}
                 download_link = soup.find('a', href=re.compile(r'/dl/\d+/[a-z0-9]+', re.IGNORECASE))
+                logger.info("Using fallback method to find download link")
             
             if download_link:
                 href = download_link.get('href')
-                logger.info(f"Found download link: {href}")
+                # Try to get format from button text
+                format_span = download_link.find('span', class_='book-property__extension')
+                file_format = format_span.text.strip() if format_span else 'unknown'
+                logger.info(f"Found download link: {href} (format: {file_format})")
                 
                 # Extract hash from /dl/{id}/{hash}
                 match = re.search(r'/dl/\d+/([a-z0-9]+)', href, re.IGNORECASE)
