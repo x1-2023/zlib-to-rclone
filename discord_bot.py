@@ -137,8 +137,11 @@ class BookDownloader:
         # Remove query params and fragments
         clean_url = url.split('?')[0].split('#')[0]
         
-        # Pattern 1: /book/{id}/{hash}
-        match = re.search(r'/book/(\d+)/([a-f0-9]+)', clean_url)
+        # Pattern 1: /book/{id}/{hash}[/filename.html] (book page)
+        # Supports:
+        # - /book/1269938/e536b6
+        # - /book/1269938/e536b6/basic-english-grammar.html
+        match = re.search(r'/book/(\d+)/([a-f0-9]+)(?:/[^/]+)?', clean_url)
         if match:
             return {
                 'id': match.group(1),
