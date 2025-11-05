@@ -701,13 +701,37 @@ class BookDownloader:
                 
                 # Get authenticated cookies from lib
                 cookies_dict = {}
+                
+                logger.info(f"DEBUG: lib={lib}")
+                logger.info(f"DEBUG: hasattr(lib, 'session')={hasattr(lib, 'session')}")
+                
                 if hasattr(lib, 'session') and lib.session:
-                    # Extract cookies from zlibrary lib's session
-                    cookies_dict = {cookie.name: cookie.value for cookie in lib.session.cookies}
-                    logger.info(f"Extracted {len(cookies_dict)} cookies from authenticated session")
+                    logger.info(f"DEBUG: lib.session={lib.session}")
+                    logger.info(f"DEBUG: lib.session.cookies={lib.session.cookies}")
+                    
+                    # Try to extract cookies - aiohttp cookies have different structure
+                    try:
+                        # aiohttp SimpleCookie format
+                        if hasattr(lib.session.cookies, 'items'):
+                            cookies_dict = {k: v.value for k, v in lib.session.cookie_jar}
+                        else:
+                            cookies_dict = {cookie.name: cookie.value for cookie in lib.session.cookies}
+                        logger.info(f"Extracted {len(cookies_dict)} cookies from authenticated session")
+                        logger.info(f"Cookie keys: {list(cookies_dict.keys())}")
+                    except Exception as e:
+                        logger.error(f"Failed to extract cookies: {e}")
+                        import traceback
+                        logger.error(traceback.format_exc())
+                else:
+                    logger.warning("lib.session not available")
+                
+                # Also try lib.cookies directly (AsyncZlib has this)
+                if not cookies_dict and hasattr(lib, 'cookies') and lib.cookies:
+                    logger.info("Trying lib.cookies directly")
+                    cookies_dict = lib.cookies
+                    logger.info(f"Got {len(cookies_dict)} cookies from lib.cookies")
                 
                 # Store cookies in book_data so download_service can use them
-                # This is a hack but necessary since download path hash expires per session
                 
             except Exception as e:
                 logger.error(f"Error getting fresh download URL: {e}")
