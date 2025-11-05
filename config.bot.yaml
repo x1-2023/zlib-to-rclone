@@ -1,0 +1,73 @@
+# ========================================
+# Discord Bot Configuration - Complete
+# ========================================
+# Fill in your real credentials for zlibrary section only
+# Other sections can be left as dummy data
+
+# Douban Configuration (NOT USED - dummy data)
+douban:
+  cookie: "bid=dummy; dbcl2=dummy"
+  wishlist_url: "https://book.douban.com/people/me/wish"
+  max_pages: 0
+
+# Database Configuration (auto-created by bot)
+database:
+  type: "sqlite"
+  path: "data/books.db"
+
+# Calibre Configuration (NOT USED - dummy data)
+calibre:
+  content_server_url: "http://localhost:8080"
+  username: "admin"
+  password: "admin"
+  match_threshold: 0.6
+
+# Z-Library Configuration (IMPORTANT - FILL IN YOUR REAL CREDENTIALS)
+zlibrary:
+  # ⚠️ CHANGE THIS: Your Z-Library account email
+  username: "your_email@example.com"
+  
+  # ⚠️ CHANGE THIS: Your Z-Library account password
+  password: "your_password"
+  
+  # Download format priority (PDF first)
+  format_priority: ["pdf", "epub", "mobi", "azw3"]
+  
+  # Download directory
+  download_dir: "data/downloads"
+  
+  # Maximum retry attempts
+  max_retries: 3
+  
+  # Language priority
+  language_priority:
+    - Chinese
+    - English
+  
+  # Proxy list - LEAVE EMPTY [] (no proxy needed)
+  proxy_list: []
+
+# Schedule Configuration (NOT USED by Discord bot)
+schedule:
+  time: "03:00"
+  run_at_startup: false
+  retry_interval: 60
+
+# Lark Notification (NOT USED - dummy data)
+lark:
+  webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/dummy"
+  enabled: false
+  level: "all"
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  file: "logs/app.log"
+  console: true
+  retention_days: 30
+
+# System Configuration
+system:
+  temp_dir: "data/temp"
+  debug: false
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
