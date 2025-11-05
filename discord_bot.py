@@ -304,29 +304,27 @@ class BookDownloader:
             book_id = book_info['id']
             logger.info(f"Getting book info for ID: {book_id}")
             
-            # Use zlibrary lib to get fresh download URL (hash expires!)
-            # This uses the AsyncZlib.get_by_id() method
+            # Use zlibrary lib to get fresh download URL
+            # IMPORTANT: get_by_id() doesn't work reliably - use search instead!
             try:
-                # Get AsyncZlib instance from search service
-                lib = self.zlibrary_service.search_service.lib
+                # Search by book ID to get the book with proper download_url
+                logger.info(f"Searching for book ID {book_id}...")
+                search_results = self.zlibrary_service.search_books(title=f"zlibid:{book_id}")
                 
-                # Force .ec domain (must set every time as library might reset)
-                # IMPORTANT: get_by_id() uses lib.mirror, not lib.domain!
-                lib.domain = 'https://z-library.ec/'
-                lib.login_domain = 'https://z-library.ec/rpc.php'
-                lib.mirror = 'https://z-library.ec'  # No trailing slash for mirror!
-                logger.info(f"Using zlibrary mirror: {lib.mirror}")
+                if not search_results:
+                    # Fallback: Try searching without zlibid prefix
+                    logger.warning(f"No results with zlibid: prefix, trying direct ID search")
+                    search_results = self.zlibrary_service.search_books(title=book_id)
                 
-                # Fetch book details with download_url using get_by_id
-                logger.info(f"Fetching book details from zlibrary lib...")
-                book_details = asyncio.run(lib.get_by_id(book_id))
-                
-                if not book_details:
-                    logger.error(f"Could not get book details from zlibrary lib")
+                if not search_results:
+                    logger.error(f"Could not find book with ID {book_id}")
                     return {
                         'success': False,
-                        'error': 'Không thể lấy thông tin sách từ Z-Library'
+                        'error': f'Không tìm thấy sách với ID {book_id} trên Z-Library'
                     }
+                
+                # Get first result (should be exact match)
+                book_details = search_results[0]
                 
                 # Extract download_url
                 download_url = book_details.get('download_url')
@@ -337,9 +335,9 @@ class BookDownloader:
                         'error': 'Sách không có link download'
                     }
                 
-                title = book_details.get('name', f'Book_{book_id}')
+                title = book_details.get('title', f'Book_{book_id}')
                 
-                logger.info(f"Got fresh download_url: {download_url}")
+                logger.info(f"Got fresh download_url from search: {download_url}")
                 
             except Exception as e:
                 logger.error(f"Error getting download_url from zlibrary lib: {e}")
