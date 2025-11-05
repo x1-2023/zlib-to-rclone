@@ -581,7 +581,8 @@ class BookDownloader:
                     best_score = 0
                     
                     # Get format priority from config
-                    format_priority = self.config.get('zlibrary', {}).get('format_priority', ['pdf', 'epub', 'mobi', 'azw3'])
+                    zlib_config = self.config_manager.get_zlibrary_config()
+                    format_priority = zlib_config.get('format_priority', ['pdf', 'epub', 'mobi', 'azw3'])
                     
                     for i, link in enumerate(book_links[:10]):  # Check first 10 results
                         # Extract data from BookLink object
