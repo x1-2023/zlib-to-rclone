@@ -546,22 +546,84 @@ class BookDownloader:
                             'error': f'❌ Không tìm thấy sách với ISBN: {isbn}\n💡 Check log file: {debug_search_html}'
                         }
                     
-                    # Extract book ID from first result
-                    first_link = book_links[0]['href']
-                    logger.info(f"First book link: {first_link}")
+                    logger.info(f"Found {len(book_links)} potential book(s) in search results")
                     
-                    # Handle both absolute and relative URLs
-                    # Examples: /book/123/abc, book/123/abc, https://z-library.ec/book/123/abc
-                    match = re.search(r'/?book/(\d+)', first_link)
-                    if not match:
-                        logger.error(f"Could not extract book ID from link: {first_link}")
+                    # Step 4.5: VALIDATE and CHOOSE the best match
+                    # Don't just take the first one - verify it's the right book!
+                    from difflib import SequenceMatcher
+                    
+                    def similarity(a, b):
+                        """Calculate text similarity (0-1)"""
+                        return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+                    
+                    best_match = None
+                    best_score = 0
+                    
+                    # Get format priority from config
+                    format_priority = self.config.get('zlibrary', {}).get('format_priority', ['pdf', 'epub', 'mobi', 'azw3'])
+                    
+                    for i, link in enumerate(book_links[:10]):  # Check first 10 results
+                        href = link.get('href', '')
+                        
+                        # Extract book ID
+                        id_match = re.search(r'/?book/(\d+)', href)
+                        if not id_match:
+                            continue
+                        
+                        candidate_id = id_match.group(1)
+                        
+                        # Get book title from link text or parent element
+                        title_elem = link.find('h3') or link.find(attrs={'itemprop': 'name'}) or link
+                        candidate_title = title_elem.get_text(strip=True) if title_elem else ''
+                        
+                        # Try to get format from nearby elements
+                        parent = link.parent
+                        format_elem = parent.find(class_=re.compile(r'extension|format', re.IGNORECASE)) if parent else None
+                        candidate_format = format_elem.get_text(strip=True).lower() if format_elem else 'unknown'
+                        
+                        # Calculate match score
+                        score = 0
+                        
+                        # 1. ISBN match in same row/parent = +50 points (most important!)
+                        if parent and isbn in parent.get_text():
+                            score += 50
+                            logger.info(f"  Result {i+1}: ISBN found in same element! +50")
+                        
+                        # 2. Format priority = +30 points for PDF, +20 for epub, etc.
+                        for priority_idx, fmt in enumerate(format_priority):
+                            if fmt in candidate_format:
+                                score += (30 - priority_idx * 5)
+                                logger.info(f"  Result {i+1}: Format {fmt} = +{30 - priority_idx * 5}")
+                                break
+                        
+                        # 3. Title similarity (if we extracted title from URL) = up to +20 points
+                        if book_info.get('title'):
+                            title_sim = similarity(book_info['title'], candidate_title)
+                            title_score = int(title_sim * 20)
+                            score += title_score
+                            if title_score > 0:
+                                logger.info(f"  Result {i+1}: Title similarity {title_sim:.2f} = +{title_score}")
+                        
+                        logger.info(f"  Result {i+1}: ID={candidate_id}, Title='{candidate_title[:50]}', Format={candidate_format}, Score={score}")
+                        
+                        if score > best_score:
+                            best_score = score
+                            best_match = {
+                                'id': candidate_id,
+                                'title': candidate_title,
+                                'format': candidate_format,
+                                'link': link
+                            }
+                    
+                    if not best_match:
+                        logger.error("No valid book ID found in search results")
                         return {
                             'success': False,
                             'error': '❌ Không thể parse kết quả search'
                         }
                     
-                    found_book_id = match.group(1)
-                    logger.info(f"Found book ID from ISBN search: {found_book_id}")
+                    found_book_id = best_match['id']
+                    logger.info(f"✅ BEST MATCH: ID={found_book_id}, Title='{best_match['title'][:50]}', Format={best_match['format']}, Score={best_score}")
                     
                 except Exception as e:
                     logger.error(f"Error searching web for ISBN: {e}")
