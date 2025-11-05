@@ -518,14 +518,25 @@ class BookDownloader:
                         book_rows = search_soup.find_all(['div', 'tr'], class_=re.compile(r'book', re.IGNORECASE))
                         logger.info(f"Found {len(book_rows)} elements with 'book' class")
                         for row in book_rows:
-                            link = row.find('a', href=re.compile(r'/book/\d+'))
+                            # Log all links in this row for debugging
+                            all_links = row.find_all('a', href=True)
+                            logger.info(f"  Row has {len(all_links)} links")
+                            for a in all_links:
+                                logger.info(f"    Link href: {a.get('href')}")
+                            
+                            # Try finding link with /book/ pattern (with or without leading slash)
+                            link = row.find('a', href=re.compile(r'/?book/\d+'))
                             if link:
                                 book_links.append(link)
                     
                     # Method 3: Just find all links with /book/ pattern (fallback)
                     if not book_links:
-                        book_links = search_soup.find_all('a', href=re.compile(r'/book/\d+'))
+                        # Try with or without leading slash
+                        book_links = search_soup.find_all('a', href=re.compile(r'/?book/\d+'))
                         logger.info(f"Fallback: Found {len(book_links)} links with /book/ pattern")
+                        if book_links:
+                            for i, link in enumerate(book_links[:3]):  # Log first 3
+                                logger.info(f"  Link {i+1}: {link.get('href')}")
                     
                     if not book_links:
                         logger.error(f"No books found for ISBN {isbn} on web search")
@@ -537,7 +548,11 @@ class BookDownloader:
                     
                     # Extract book ID from first result
                     first_link = book_links[0]['href']
-                    match = re.search(r'/book/(\d+)', first_link)
+                    logger.info(f"First book link: {first_link}")
+                    
+                    # Handle both absolute and relative URLs
+                    # Examples: /book/123/abc, book/123/abc, https://z-library.ec/book/123/abc
+                    match = re.search(r'/?book/(\d+)', first_link)
                     if not match:
                         logger.error(f"Could not extract book ID from link: {first_link}")
                         return {
