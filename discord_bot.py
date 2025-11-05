@@ -519,6 +519,7 @@ class BookDownloader:
                         card_id = card.get('id')
                         card_isbn = card.get('isbn')
                         card_href = card.get('href')
+                        card_download = card.get('download')  # /dl/ID/hash
                         card_ext = card.get('extension', '').lower()
                         
                         # Get title from slot
@@ -529,7 +530,7 @@ class BookDownloader:
                         author_slot = card.find('div', attrs={'slot': 'author'})
                         card_author = author_slot.get_text(strip=True) if author_slot else ''
                         
-                        logger.info(f"  Card: ID={card_id}, ISBN={card_isbn}, Format={card_ext}, Title='{card_title[:50]}'")
+                        logger.info(f"  Card: ID={card_id}, ISBN={card_isbn}, Format={card_ext}, Download={card_download}, Title='{card_title[:50]}'")
                         
                         # Create a fake link object with extracted data
                         class BookLink:
@@ -553,6 +554,7 @@ class BookDownloader:
                         book_links.append(BookLink({
                             'id': card_id,
                             'href': card_href,
+                            'download': card_download,  # Add download URL
                             'isbn': card_isbn,
                             'extension': card_ext,
                             'title': card_title,
@@ -592,6 +594,8 @@ class BookDownloader:
                             candidate_title = link.data.get('title', '')
                             candidate_format = link.data.get('extension', 'unknown')
                             candidate_isbn = link.data.get('isbn', '')
+                            candidate_download = link.data.get('download', '')  # Download path
+                            candidate_author = link.data.get('author', '')
                             href = link.data.get('href', '')
                         else:
                             # Fallback for regular <a> tags (if any)
@@ -648,6 +652,8 @@ class BookDownloader:
                                 'id': candidate_id,
                                 'title': candidate_title,
                                 'format': candidate_format,
+                                'download': candidate_download if hasattr(link, 'data') else None,
+                                'author': candidate_author if hasattr(link, 'data') else '',
                                 'link': link
                             }
                     
@@ -659,6 +665,7 @@ class BookDownloader:
                         }
                     
                     found_book_id = best_match['id']
+                    found_download_path = best_match.get('download')  # /dl/ID/hash from z-bookcard
                     logger.info(f"✅ BEST MATCH: ID={found_book_id}, Title='{best_match['title'][:50]}', Format={best_match['format']}, Score={best_score}")
                     
                 except Exception as e:
@@ -670,36 +677,51 @@ class BookDownloader:
                         'error': f'❌ Lỗi khi search ISBN: {str(e)}'
                     }
                 
-                # Step 5: Use get_by_id with the found book ID
-                lib = self.zlibrary_service.search_service.lib
-                logger.info(f"Getting book details via get_by_id({found_book_id})...")
+                # Step 5: Build download URL directly from z-bookcard data
+                # z-bookcard already has fresh download="/dl/ID/hash" attribute!
+                # This avoids calling get_by_id() which fails on .sk domain
                 
-                async def get_book_by_id():
-                    try:
-                        book = await lib.get_by_id(str(found_book_id))
-                        return book
-                    except Exception as e:
-                        logger.error(f"get_by_id failed: {e}")
-                        return None
+                if not found_download_path:
+                    logger.error("No download path in z-bookcard, falling back to get_by_id")
+                    # Fallback to get_by_id if download path not available
+                    lib = self.zlibrary_service.search_service.lib
+                    logger.info(f"Getting book details via get_by_id({found_book_id})...")
+                    
+                    async def get_book_by_id():
+                        try:
+                            book = await lib.get_by_id(str(found_book_id))
+                            return book
+                        except Exception as e:
+                            logger.error(f"get_by_id failed: {e}")
+                            return None
+                    
+                    book_details = asyncio.run(get_book_by_id())
+                    
+                    if not book_details:
+                        return {
+                            'success': False,
+                            'error': f'❌ Không thể lấy thông tin sách (ID: {found_book_id})'
+                        }
+                    
+                    download_url = book_details.get('download_url')
+                    title = book_details.get('name', f'Book_{found_book_id}')
+                    authors = book_details.get('authors', 'Unknown')
+                    extension = book_details.get('extension', 'pdf')
+                else:
+                    # Use data directly from z-bookcard
+                    # Build full download URL: https://z-library.ec/dl/ID/hash
+                    download_url = f"https://z-library.ec{found_download_path}"
+                    title = best_match.get('title', f'Book_{found_book_id}')
+                    authors = best_match.get('author', 'Unknown')
+                    extension = best_match.get('format', 'pdf')
+                    
+                    logger.info(f"Using download URL from z-bookcard: {download_url}")
                 
-                book_details = asyncio.run(get_book_by_id())
-                
-                if not book_details:
-                    return {
-                        'success': False,
-                        'error': f'❌ Không thể lấy thông tin sách (ID: {found_book_id})'
-                    }
-                
-                download_url = book_details.get('download_url')
                 if not download_url:
                     return {
                         'success': False,
                         'error': '❌ Sách không có link download'
                     }
-                
-                title = book_details.get('name', f'Book_{found_book_id}')
-                authors = book_details.get('authors', 'Unknown')
-                extension = book_details.get('extension', 'pdf')
                 
                 logger.info(f"Got book: {title}")
                 logger.info(f"Got fresh download_url: {download_url}")
