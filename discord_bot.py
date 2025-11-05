@@ -501,42 +501,63 @@ class BookDownloader:
                     
                     search_soup = BeautifulSoup(search_response.content, 'html.parser')
                     
-                    # Try multiple methods to find book links
+                    # Z-Library uses custom web components: <z-bookcard>
+                    # Extract book info from z-bookcard attributes
+                    bookcards = search_soup.find_all('z-bookcard')
+                    logger.info(f"Found {len(bookcards)} z-bookcard element(s)")
+                    
                     book_links = []
-                    
-                    # Method 1: Look for itemType="http://schema.org/Book" (structured data)
-                    book_items = search_soup.find_all(attrs={'itemtype': re.compile(r'schema.org/Book', re.IGNORECASE)})
-                    if book_items:
-                        logger.info(f"Found {len(book_items)} book items with schema.org")
-                        for item in book_items:
-                            link = item.find('a', href=re.compile(r'/book/\d+'))
-                            if link:
-                                book_links.append(link)
-                    
-                    # Method 2: Look for class "bookRow" or "book-item"
-                    if not book_links:
-                        book_rows = search_soup.find_all(['div', 'tr'], class_=re.compile(r'book', re.IGNORECASE))
-                        logger.info(f"Found {len(book_rows)} elements with 'book' class")
-                        for row in book_rows:
-                            # Log all links in this row for debugging
-                            all_links = row.find_all('a', href=True)
-                            logger.info(f"  Row has {len(all_links)} links")
-                            for a in all_links:
-                                logger.info(f"    Link href: {a.get('href')}")
+                    for card in bookcards:
+                        # z-bookcard has these important attributes:
+                        # - id="11948830" (book ID)
+                        # - isbn="9780194420884"  
+                        # - href="/book/11948830/2c2f55/oxford-english-grammar-course-basic.html"
+                        # - extension="pdf"
+                        # - title in <div slot="title">
+                        # - author in <div slot="author">
+                        
+                        card_id = card.get('id')
+                        card_isbn = card.get('isbn')
+                        card_href = card.get('href')
+                        card_ext = card.get('extension', '').lower()
+                        
+                        # Get title from slot
+                        title_slot = card.find('div', attrs={'slot': 'title'})
+                        card_title = title_slot.get_text(strip=True) if title_slot else ''
+                        
+                        # Get author from slot
+                        author_slot = card.find('div', attrs={'slot': 'author'})
+                        card_author = author_slot.get_text(strip=True) if author_slot else ''
+                        
+                        logger.info(f"  Card: ID={card_id}, ISBN={card_isbn}, Format={card_ext}, Title='{card_title[:50]}'")
+                        
+                        # Create a fake link object with extracted data
+                        class BookLink:
+                            def __init__(self, card_data):
+                                self.data = card_data
                             
-                            # Try finding link with /book/ pattern (with or without leading slash)
-                            link = row.find('a', href=re.compile(r'/?book/\d+'))
-                            if link:
-                                book_links.append(link)
-                    
-                    # Method 3: Just find all links with /book/ pattern (fallback)
-                    if not book_links:
-                        # Try with or without leading slash
-                        book_links = search_soup.find_all('a', href=re.compile(r'/?book/\d+'))
-                        logger.info(f"Fallback: Found {len(book_links)} links with /book/ pattern")
-                        if book_links:
-                            for i, link in enumerate(book_links[:3]):  # Log first 3
-                                logger.info(f"  Link {i+1}: {link.get('href')}")
+                            def get(self, attr, default=''):
+                                if attr == 'href':
+                                    return self.data.get('href', '')
+                                return default
+                            
+                            @property
+                            def parent(self):
+                                # Return self so ISBN check works
+                                return self
+                            
+                            def get_text(self, strip=False):
+                                # Return ISBN so parent.get_text() works
+                                return self.data.get('isbn', '')
+                        
+                        book_links.append(BookLink({
+                            'id': card_id,
+                            'href': card_href,
+                            'isbn': card_isbn,
+                            'extension': card_ext,
+                            'title': card_title,
+                            'author': card_author
+                        }))
                     
                     if not book_links:
                         logger.error(f"No books found for ISBN {isbn} on web search")
@@ -563,31 +584,45 @@ class BookDownloader:
                     format_priority = self.config.get('zlibrary', {}).get('format_priority', ['pdf', 'epub', 'mobi', 'azw3'])
                     
                     for i, link in enumerate(book_links[:10]):  # Check first 10 results
-                        href = link.get('href', '')
+                        # Extract data from BookLink object
+                        if hasattr(link, 'data'):
+                            # Custom BookLink from z-bookcard
+                            candidate_id = link.data.get('id')
+                            candidate_title = link.data.get('title', '')
+                            candidate_format = link.data.get('extension', 'unknown')
+                            candidate_isbn = link.data.get('isbn', '')
+                            href = link.data.get('href', '')
+                        else:
+                            # Fallback for regular <a> tags (if any)
+                            href = link.get('href', '')
+                            
+                            # Extract book ID
+                            id_match = re.search(r'/?book/(\d+)', href)
+                            if not id_match:
+                                continue
+                            
+                            candidate_id = id_match.group(1)
+                            
+                            # Get book title from link text or parent element
+                            title_elem = link.find('h3') or link.find(attrs={'itemprop': 'name'}) or link
+                            candidate_title = title_elem.get_text(strip=True) if title_elem else ''
+                            
+                            # Try to get format from nearby elements
+                            parent = link.parent
+                            format_elem = parent.find(class_=re.compile(r'extension|format', re.IGNORECASE)) if parent else None
+                            candidate_format = format_elem.get_text(strip=True).lower() if format_elem else 'unknown'
+                            candidate_isbn = ''
                         
-                        # Extract book ID
-                        id_match = re.search(r'/?book/(\d+)', href)
-                        if not id_match:
+                        if not candidate_id:
                             continue
-                        
-                        candidate_id = id_match.group(1)
-                        
-                        # Get book title from link text or parent element
-                        title_elem = link.find('h3') or link.find(attrs={'itemprop': 'name'}) or link
-                        candidate_title = title_elem.get_text(strip=True) if title_elem else ''
-                        
-                        # Try to get format from nearby elements
-                        parent = link.parent
-                        format_elem = parent.find(class_=re.compile(r'extension|format', re.IGNORECASE)) if parent else None
-                        candidate_format = format_elem.get_text(strip=True).lower() if format_elem else 'unknown'
                         
                         # Calculate match score
                         score = 0
                         
-                        # 1. ISBN match in same row/parent = +50 points (most important!)
-                        if parent and isbn in parent.get_text():
+                        # 1. ISBN match = +50 points (most important!)
+                        if candidate_isbn and candidate_isbn == isbn:
                             score += 50
-                            logger.info(f"  Result {i+1}: ISBN found in same element! +50")
+                            logger.info(f"  Result {i+1}: ISBN exact match! +50")
                         
                         # 2. Format priority = +30 points for PDF, +20 for epub, etc.
                         for priority_idx, fmt in enumerate(format_priority):
