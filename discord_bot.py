@@ -487,22 +487,59 @@ class BookDownloader:
                 # Use zlibrary_service.search_books(isbn=...) instead of web crawling
                 logger.info(f"Searching Z-Library API for ISBN: {isbn}")
                 
+                search_results = None
                 try:
                     # Use authenticated zlibrary API (handles session automatically)
                     # search_books returns List[Dict] with authenticated download_url
                     search_results = self.zlibrary_service.search_books(isbn=isbn)
                     
-                    if not search_results:
-                        logger.error(f"No books found for ISBN {isbn} via API")
+                except Exception as isbn_search_error:
+                    # ISBN search failed - fallback to get_by_id
+                    logger.warning(f"ISBN search failed: {isbn_search_error}")
+                    logger.info(f"Falling back to get_by_id({book_id})...")
+                    search_results = None
+                
+                if not search_results:
+                    # Fallback to get_by_id if ISBN search failed
+                    logger.warning(f"No results from ISBN search, trying get_by_id({book_id})...")
+                    
+                    lib = self.zlibrary_service.search_service.lib
+                    
+                    async def get_book_by_id():
+                        try:
+                            book = await lib.get_by_id(str(book_id))
+                            return book
+                        except Exception as e:
+                            logger.error(f"get_by_id failed: {e}")
+                            return None
+                    
+                    book_details = asyncio.run(get_book_by_id())
+                    
+                    if not book_details:
                         return {
                             'success': False,
-                            'error': f'❌ Không tìm thấy sách với ISBN: {isbn}'
+                            'error': '❌ Không tìm thấy sách với ISBN và get_by_id cũng thất bại'
                         }
                     
+                    # Got book via get_by_id
+                    download_url = book_details.get('download_url')
+                    if not download_url:
+                        return {
+                            'success': False,
+                            'error': '❌ Sách không có link download'
+                        }
+                    
+                    title = book_details.get('name', f'Book_{book_id}')
+                    authors = book_details.get('authors', 'Unknown')
+                    extension = book_details.get('extension', 'pdf')
+                    
+                    logger.info(f"✅ Got book via get_by_id: {title}")
+                    
+                else:
+                    # ISBN search succeeded - choose best match
                     logger.info(f"Found {len(search_results)} book(s) from Z-Library API")
                     
                     # Step 4.5: Choose the best match from API results
-                    # API results already contain authenticated download_url!
                     from difflib import SequenceMatcher
                     
                     def similarity(a, b):
@@ -573,31 +610,20 @@ class BookDownloader:
                     
                     logger.info(f"✅ BEST MATCH: ID={best_match['id']}, Title='{best_match['title'][:50]}', Format={best_match['format']}, Score={best_score}")
                     
-                except Exception as e:
-                    import traceback
-                    logger.error(f"Error during ISBN search: {e}")
-                    logger.error(f"Traceback: {traceback.format_exc()}")
-                    return {
-                        'success': False,
-                        'error': f'❌ Lỗi khi search ISBN: {str(e)}'
-                    }
-                
-                # Step 5: Download using authenticated download_url from API
-                # No need to fetch page again - API already returns authenticated URL!
-                
-                title = best_match.get('title', f'Book_{book_id}')
-                authors = best_match.get('author', 'Unknown')
-                extension = best_match.get('format', 'pdf')
-                download_url = best_match.get('download_url')
-                
-                if not download_url:
-                    logger.error("No download_url in API result!")
-                    return {
-                        'success': False,
-                        'error': '❌ API không trả về download URL'
-                    }
-                
-                logger.info(f"Using authenticated download URL from API: {download_url}")
+                    # Extract from best_match
+                    title = best_match.get('title', f'Book_{book_id}')
+                    authors = best_match.get('author', 'Unknown')
+                    extension = best_match.get('format', 'pdf')
+                    download_url = best_match.get('download_url')
+                    
+                    if not download_url:
+                        logger.error("No download_url in API result!")
+                        return {
+                            'success': False,
+                            'error': '❌ API không trả về download URL'
+                        }
+                    
+                    logger.info(f"Using authenticated download URL from API: {download_url}")
             
             except Exception as e:
                 logger.error(f"Error in ISBN search workflow: {e}")
