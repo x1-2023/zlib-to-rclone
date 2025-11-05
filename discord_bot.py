@@ -491,17 +491,48 @@ class BookDownloader:
                 try:
                     search_response = requests.get(search_url, headers=headers, timeout=10)
                     search_response.raise_for_status()
+                    
+                    # Save search HTML for debugging
+                    debug_search_html = "data/temp/debug_search.html"
+                    os.makedirs(os.path.dirname(debug_search_html), exist_ok=True)
+                    with open(debug_search_html, 'w', encoding='utf-8') as f:
+                        f.write(search_response.text)
+                    logger.info(f"Saved search HTML to {debug_search_html}")
+                    
                     search_soup = BeautifulSoup(search_response.content, 'html.parser')
                     
-                    # Find first book result and extract its ID
-                    # Look for book links: /book/ID/hash or /book/ID/hash/filename.html
-                    book_links = search_soup.find_all('a', href=re.compile(r'/book/\d+'))
+                    # Try multiple methods to find book links
+                    book_links = []
+                    
+                    # Method 1: Look for itemType="http://schema.org/Book" (structured data)
+                    book_items = search_soup.find_all(attrs={'itemtype': re.compile(r'schema.org/Book', re.IGNORECASE)})
+                    if book_items:
+                        logger.info(f"Found {len(book_items)} book items with schema.org")
+                        for item in book_items:
+                            link = item.find('a', href=re.compile(r'/book/\d+'))
+                            if link:
+                                book_links.append(link)
+                    
+                    # Method 2: Look for class "bookRow" or "book-item"
+                    if not book_links:
+                        book_rows = search_soup.find_all(['div', 'tr'], class_=re.compile(r'book', re.IGNORECASE))
+                        logger.info(f"Found {len(book_rows)} elements with 'book' class")
+                        for row in book_rows:
+                            link = row.find('a', href=re.compile(r'/book/\d+'))
+                            if link:
+                                book_links.append(link)
+                    
+                    # Method 3: Just find all links with /book/ pattern (fallback)
+                    if not book_links:
+                        book_links = search_soup.find_all('a', href=re.compile(r'/book/\d+'))
+                        logger.info(f"Fallback: Found {len(book_links)} links with /book/ pattern")
                     
                     if not book_links:
                         logger.error(f"No books found for ISBN {isbn} on web search")
+                        logger.error(f"HTML preview: {search_response.text[:500]}")
                         return {
                             'success': False,
-                            'error': f'❌ Không tìm thấy sách với ISBN: {isbn}'
+                            'error': f'❌ Không tìm thấy sách với ISBN: {isbn}\n💡 Check log file: {debug_search_html}'
                         }
                     
                     # Extract book ID from first result
