@@ -300,40 +300,83 @@ class BookDownloader:
                     'error': 'URL không hợp lệ. Vui lòng cung cấp URL từ Z-Library'
                 }
             
-            # Check if this is a direct download link or book page
-            if book_info['type'] == 'book_page':
+            # Get book ID (works for both /book/ and /dl/ URLs)
+            book_id = book_info['id']
+            
+            # IMPORTANT: Hash in URL expires! We must search to get fresh download_url
+            # Even direct download links (/dl/) have session-specific hashes that expire
+            logger.info(f"Book ID: {book_id} - Searching to get fresh download URL...")
+            
+            try:
+                # Method 1: Search by exact book ID using zlibrary API
+                # This will return the book with a fresh, valid download_url
+                lib = self.zlibrary_service.search_service.lib
+                
+                # Search using the book ID
+                logger.info(f"Searching Z-Library for book ID {book_id}...")
+                
+                # Use async search
+                async def search_by_id():
+                    paginator = await lib.search(q=f"{book_id}")
+                    await paginator.next()
+                    return paginator.result
+                
+                results = asyncio.run(search_by_id())
+                
+                if not results:
+                    logger.error(f"No results found for book ID {book_id}")
+                    return {
+                        'success': False,
+                        'error': f'❌ Không tìm thấy sách với ID {book_id}\n\n' +
+                                '💡 Vui lòng thử lại hoặc kiểm tra link'
+                    }
+                
+                # Find the exact book by ID
+                book_result = None
+                for result in results:
+                    if str(result.get('id')) == str(book_id):
+                        book_result = result
+                        break
+                
+                if not book_result:
+                    # If exact match not found, use first result
+                    logger.warning(f"Exact ID match not found, using first result")
+                    book_result = results[0]
+                
+                # Fetch full book details with download_url
+                logger.info(f"Fetching book details...")
+                book_details = asyncio.run(book_result.fetch())
+                
+                download_url = book_details.get('download_url')
+                if not download_url:
+                    logger.error(f"Book details missing download_url")
+                    return {
+                        'success': False,
+                        'error': '❌ Sách không có link download khả dụng'
+                    }
+                
+                title = book_details.get('name', f'Book_{book_id}')
+                authors = book_details.get('authors', 'Unknown')
+                extension = book_details.get('extension', 'pdf')
+                
+                logger.info(f"Got fresh download_url: {download_url}")
+                
+            except Exception as e:
+                logger.error(f"Error searching for book: {e}")
+                import traceback
+                traceback.print_exc()
                 return {
                     'success': False,
-                    'error': '❌ Vui lòng dùng direct download link!\n\n' +
-                            '📖 Cách lấy link:\n' +
-                            '1. Mở trang sách trên Z-Library\n' +
-                            '2. Click nút download (PDF/EPUB/...)\n' +
-                            '3. Copy URL từ nút download đó\n' +
-                            '4. Paste vào bot\n\n' +
-                            '✅ Link đúng: https://z-library.xx/dl/123456/abc123\n' +
-                            '❌ Link sai: https://z-library.xx/book/123456/...'
+                    'error': f'❌ Lỗi khi tìm sách: {str(e)}'
                 }
-            
-            # Extract download info from direct link
-            book_id = book_info['id']
-            download_hash = book_info['hash']
-            domain = book_info['domain']
-            
-            logger.info(f"Direct download link: ID={book_id}, hash={download_hash}")
-            
-            # Construct full download URL
-            download_url = f"https://{domain}/dl/{book_id}/{download_hash}"
-            title = f"Book_{book_id}"
-            
-            logger.info(f"Using download URL: {download_url}")
             
             # Chuẩn bị book_info cho service
             book_data = {
                 'zlibrary_id': book_id,
                 'title': title,
-                'authors': 'Unknown',
+                'authors': authors,
                 'download_url': download_url,
-                'extension': 'pdf',  # Will be detected from download response
+                'extension': extension,
                 'url': url
             }
             logger.info(f"Downloading book ID: {book_info['id']} (using zlibrary service authenticated session)")
@@ -793,14 +836,12 @@ async def slash_help(interaction: discord.Interaction):
     )
     
     embed.add_field(
-        name="🔗 Cách Lấy Direct Download Link",
+        name="🔗 Supported URL Types",
         value=(
-            "**Bước 1:** Mở trang sách trên Z-Library\n"
-            "**Bước 2:** Click chuột phải vào nút download (PDF/EPUB/...)\n"
-            "**Bước 3:** Copy link address\n"
-            "**Bước 4:** Paste vào bot\n\n"
-            "✅ **Link đúng:** `https://z-library.xx/dl/123456/abc123`\n"
-            "❌ **Link sai:** `https://z-library.xx/book/123456/...`"
+            "Bot tự động tìm và download với URL mới nhất!\n\n"
+            "✅ **Book page:** `https://z-library.xx/book/123456/abc123`\n"
+            "✅ **Direct link:** `https://z-library.xx/dl/123456/abc123`\n\n"
+            "💡 **Tip:** Copy bất kỳ link nào từ Z-Library đều được!"
         ),
         inline=False
     )
