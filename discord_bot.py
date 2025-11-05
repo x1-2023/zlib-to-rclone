@@ -308,60 +308,205 @@ class BookDownloader:
             logger.info(f"Book ID: {book_id}")
             
             try:
-                # Step 1: Extract book title from URL filename (if available)
-                # Example: /book/1269938/e536b6/basic-english-grammar.html
-                #          → "basic english grammar"
-                book_title = None
-                url_parts = url.split('?')[0].split('#')[0].split('/')
+                import requests
+                from bs4 import BeautifulSoup
                 
-                # Look for filename part (last element ending with .html or similar)
-                for part in reversed(url_parts):
-                    if part and '.' in part:
-                        # Remove extension and convert to readable title
-                        filename = part.rsplit('.', 1)[0]
-                        # Replace hyphens/underscores with spaces
-                        book_title = filename.replace('-', ' ').replace('_', ' ').strip()
-                        if book_title and len(book_title) > 3:  # Valid title
-                            logger.info(f"Extracted title from URL: {book_title}")
+                # Step 1: Fetch book page to extract ISBN
+                # ISBN is unique identifier - perfect for exact search!
+                book_page_url = url.split('?')[0].split('#')[0]
+                if '/dl/' in book_page_url:
+                    # Convert /dl/ to /book/ to access book page
+                    book_page_url = book_page_url.replace('/dl/', '/book/')
+                    # Remove hash part: /book/ID/hash → /book/ID
+                    parts = book_page_url.split('/')
+                    if len(parts) >= 6:  # https://domain/book/ID/hash
+                        book_page_url = '/'.join(parts[:5])  # Keep only up to ID
+                
+                logger.info(f"Fetching book page to extract ISBN: {book_page_url}")
+                
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+                
+                try:
+                    response = requests.get(book_page_url, headers=headers, timeout=10)
+                    response.raise_for_status()
+                except Exception as e:
+                    logger.error(f"Failed to fetch book page: {e}")
+                    return {
+                        'success': False,
+                        'error': f'❌ Không thể truy cập trang sách: {str(e)}'
+                    }
+                
+                soup = BeautifulSoup(response.content, 'html.parser')
+                
+                # Step 2: Extract ISBN from meta description or page content
+                # Example: <meta name="description" content="...ISBN: 9780194420884...">
+                isbn = None
+                
+                # Method 1: Check meta description
+                meta_desc = soup.find('meta', attrs={'name': 'description'})
+                if meta_desc and meta_desc.get('content'):
+                    desc_content = meta_desc.get('content')
+                    # Look for ISBN pattern: ISBN: XXXXXXXXXX or ISBN-10/13
+                    isbn_match = re.search(r'ISBN[:\s-]*(\d{10,13})', desc_content, re.IGNORECASE)
+                    if isbn_match:
+                        isbn = isbn_match.group(1)
+                        logger.info(f"Found ISBN in meta description: {isbn}")
+                
+                # Method 2: Look in page content for ISBN
+                if not isbn:
+                    # Find all text containing "ISBN"
+                    isbn_elements = soup.find_all(string=re.compile(r'ISBN', re.IGNORECASE))
+                    for elem in isbn_elements:
+                        isbn_match = re.search(r'ISBN[:\s-]*(\d{10,13})', elem, re.IGNORECASE)
+                        if isbn_match:
+                            isbn = isbn_match.group(1)
+                            logger.info(f"Found ISBN in page content: {isbn}")
                             break
                 
-                if not book_title:
-                    # No filename in URL, just use book ID to search
-                    logger.warning("No title in URL, will search by ID only")
-                    book_title = str(book_id)
+                # Method 3: Look for data attributes or structured data
+                if not isbn:
+                    # Sometimes ISBN is in structured data (JSON-LD)
+                    script_tags = soup.find_all('script', type='application/ld+json')
+                    for script in script_tags:
+                        try:
+                            import json
+                            data = json.loads(script.string)
+                            if 'isbn' in data:
+                                isbn = str(data['isbn'])
+                                logger.info(f"Found ISBN in structured data: {isbn}")
+                                break
+                        except:
+                            pass
                 
-                # Step 2: Get zlibrary lib and search by title
+                # Step 3: Search by ISBN (most accurate!) or fallback to get_by_id
+                if not isbn:
+                    logger.warning("No ISBN found in page, trying get_by_id API...")
+                    
+                    # Try using zlibrary's get_by_id (may fail on some domains)
+                    lib = self.zlibrary_service.search_service.lib
+                    
+                    async def get_book_by_id():
+                        try:
+                            # Try to get book directly by ID
+                            book = await lib.get_by_id(str(book_id))
+                            return book
+                        except Exception as e:
+                            logger.error(f"get_by_id failed: {e}")
+                            return None
+                    
+                    book_details = asyncio.run(get_book_by_id())
+                    
+                    if not book_details:
+                        return {
+                            'success': False,
+                            'error': '❌ URL không có tên sách và không thể tìm theo ID\n\n' +
+                                    '💡 Vui lòng dùng URL có tên sách, ví dụ:\n' +
+                                    '✅ https://z-library.xx/book/123/abc/book-title.html\n' +
+                                    '❌ https://z-library.xx/book/123/abc'
+                        }
+                    
+                    # Got book details directly, extract info
+                    download_url = book_details.get('download_url')
+                    if not download_url:
+                        return {
+                            'success': False,
+                            'error': '❌ Sách không có link download'
+                        }
+                    
+                    title = book_details.get('name', f'Book_{book_id}')
+                    authors = book_details.get('authors', 'Unknown')
+                    extension = book_details.get('extension', 'pdf')
+                    
+                    logger.info(f"Got book via get_by_id: {title}")
+                    
+                    # Skip search, go directly to download
+                    book_data = {
+                        'zlibrary_id': book_id,
+                        'title': title,
+                        'authors': authors,
+                        'download_url': download_url,
+                        'extension': extension,
+                        'url': url
+                    }
+                    
+                    logger.info(f"Downloading book ID: {book_id} (using zlibrary service authenticated session)")
+                    file_path = self.zlibrary_service.download_book(book_data, DOWNLOAD_DIR)
+                    
+                    if not file_path or not os.path.exists(file_path):
+                        return {
+                            'success': False,
+                            'error': 'Download thất bại. File không tồn tại sau khi download.'
+                        }
+                    
+                    # Continue to upload...
+                    file_size = os.path.getsize(file_path)
+                    file_name = os.path.basename(file_path)
+                    
+                    logger.info(f"Download thành công: {file_name} ({file_size} bytes)")
+                    
+                    # Upload to Google Drive
+                    logger.info(f"Uploading {file_name} lên {RCLONE_REMOTE}:{RCLONE_FOLDER}/{file_name}")
+                    uploader = RcloneUploader(RCLONE_REMOTE, RCLONE_FOLDER)
+                    
+                    upload_result = uploader.upload_file(file_path)
+                    if not upload_result['success']:
+                        return {
+                            'success': False,
+                            'error': f"Upload thất bại: {upload_result.get('error', 'Unknown error')}"
+                        }
+                    
+                    logger.info(f"Upload thành công: {upload_result['remote_path']}")
+                    
+                    # Get public link
+                    link_result = uploader.get_public_link(file_name)
+                    public_link = link_result.get('link', 'Không thể tạo public link')
+                    
+                    logger.info(f"Public link created: {public_link}")
+                    
+                    # Cleanup
+                    if AUTO_DELETE_AFTER_UPLOAD:
+                        try:
+                            os.remove(file_path)
+                            logger.info(f"Đã xóa file local: {file_path}")
+                        except Exception as e:
+                            logger.warning(f"Không thể xóa file: {e}")
+                    
+                    logger.info(f"Hoàn thành download qua get_by_id: {file_name}")
+                    
+                    return {
+                        'success': True,
+                        'file_name': file_name,
+                        'file_size': file_size,
+                        'public_link': public_link,
+                        'remote_path': upload_result['remote_path']
+                    }
+                
+                # Step 4: Search by ISBN (exact match!)
                 lib = self.zlibrary_service.search_service.lib
-                logger.info(f"Searching Z-Library for: {book_title}")
+                logger.info(f"Searching Z-Library by ISBN: {isbn}")
                 
-                async def search_by_title():
-                    paginator = await lib.search(q=book_title, count=5)
+                async def search_by_isbn():
+                    # Search with "isbn:" prefix for exact ISBN search
+                    paginator = await lib.search(q=f"isbn:{isbn}", count=5)
                     await paginator.next()
                     return paginator.result
                 
-                results = asyncio.run(search_by_title())
+                results = asyncio.run(search_by_isbn())
                 
                 if not results:
-                    logger.error(f"No results found for: {book_title}")
+                    logger.error(f"No results found for ISBN: {isbn}")
                     return {
                         'success': False,
-                        'error': f'❌ Không tìm thấy sách: {book_title}'
+                        'error': f'❌ Không tìm thấy sách với ISBN: {isbn}'
                     }
                 
-                # Step 3: Find exact match by ID
-                book_result = None
-                for result in results:
-                    if str(result.get('id')) == str(book_id):
-                        book_result = result
-                        logger.info(f"Found exact match by ID: {book_id}")
-                        break
+                # ISBN search should return exact match, use first result
+                book_result = results[0]
+                logger.info(f"Found book by ISBN: {book_result.get('name', 'Unknown')}")
                 
-                if not book_result:
-                    # Use first result if no exact match
-                    logger.warning(f"No exact ID match, using first result")
-                    book_result = results[0]
-                
-                # Step 4: Fetch full details with download_url
+                # Step 5: Fetch full details with download_url
                 logger.info(f"Fetching book details...")
                 book_details = asyncio.run(book_result.fetch())
                 
@@ -373,7 +518,7 @@ class BookDownloader:
                         'error': '❌ Sách không có link download khả dụng'
                     }
                 
-                title = book_details.get('name', book_title)
+                title = book_details.get('name', f'Book_{book_id}')
                 authors = book_details.get('authors', 'Unknown')
                 extension = book_details.get('extension', 'pdf')
                 
