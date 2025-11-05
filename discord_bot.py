@@ -685,18 +685,29 @@ class BookDownloader:
                 authors = best_match.get('author', 'Unknown')
                 extension = best_match.get('format', 'pdf')
                 
-                logger.info(f"Building download URL for book ID: {found_book_id}")
+                logger.info(f"Using download path from z-bookcard: {found_download_path}")
                 
-                # FINAL SOLUTION: Don't use get_by_id() at all!
-                # Build download URL manually and use lib's authenticated session
-                # Pattern: https://z-library.ec/book/ID will redirect to download
+                # REAL FINAL SOLUTION:
+                # Use the download path from z-bookcard BUT with authenticated cookies
+                # Get cookies from zlibrary lib's session
                 
-                # Create a simple book_data dict with the info we have
-                # The zlibrary download service will handle getting the actual file
-                download_url = f"https://z-library.ec/book/{found_book_id}"
+                lib = self.zlibrary_service.search_service.lib
                 
-                logger.info(f"Using book page URL as download URL: {download_url}")
-                logger.info(f"Download will be handled by zlibrary_service with authenticated session")
+                # Build full download URL with the hash from z-bookcard
+                # This hash is fresh from the search results
+                download_url = f"https://z-library.ec{best_match.get('download', found_download_path)}"
+                
+                logger.info(f"Download URL with fresh hash: {download_url}")
+                
+                # Get authenticated cookies from lib
+                cookies_dict = {}
+                if hasattr(lib, 'session') and lib.session:
+                    # Extract cookies from zlibrary lib's session
+                    cookies_dict = {cookie.name: cookie.value for cookie in lib.session.cookies}
+                    logger.info(f"Extracted {len(cookies_dict)} cookies from authenticated session")
+                
+                # Store cookies in book_data so download_service can use them
+                # This is a hack but necessary since download path hash expires per session
                 
             except Exception as e:
                 logger.error(f"Error getting fresh download URL: {e}")
@@ -714,9 +725,10 @@ class BookDownloader:
                 'authors': authors,
                 'download_url': download_url,
                 'extension': extension,
-                'url': url
+                'url': url,
+                'cookies': cookies_dict  # Pass authenticated cookies
             }
-            logger.info(f"Downloading book ID: {book_info['id']} (using zlibrary service authenticated session)")
+            logger.info(f"Downloading book ID: {book_id} with authenticated cookies")
             file_path = self.zlibrary_service.download_book(book_data, DOWNLOAD_DIR)
             
             if not file_path or not os.path.exists(file_path):
