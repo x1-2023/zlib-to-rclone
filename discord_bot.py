@@ -186,8 +186,13 @@ class BookDownloader:
         """
         Parse book page HTML để lấy download hash thật từ download button
         
+        HTML structure:
+        <a class="btn btn-default addDownloadedBook" href="/dl/1269938/f07321">
+            <span>pdf</span>, 19.30 MB
+        </a>
+        
         Returns:
-            str: Download hash (e.g., 'b88232') hoặc None nếu không tìm thấy
+            str: Download hash (e.g., 'f07321') hoặc None nếu không tìm thấy
         """
         try:
             import requests
@@ -199,14 +204,19 @@ class BookDownloader:
             
             soup = BeautifulSoup(response.content, 'html.parser')
             
-            # Tìm download link trong page
-            # Pattern 1: <a href="/dl/{id}/{hash}">Download</a>
-            download_link = soup.find('a', href=re.compile(r'/dl/\d+/[a-f0-9]+'))
+            # Method 1: Find by class "addDownloadedBook" (most reliable)
+            download_link = soup.find('a', class_='addDownloadedBook')
+            
+            if not download_link:
+                # Method 2: Find any <a> with href matching /dl/{id}/{hash}
+                download_link = soup.find('a', href=re.compile(r'/dl/\d+/[a-z0-9]+', re.IGNORECASE))
             
             if download_link:
                 href = download_link.get('href')
+                logger.info(f"Found download link: {href}")
+                
                 # Extract hash from /dl/{id}/{hash}
-                match = re.search(r'/dl/\d+/([a-f0-9]+)', href)
+                match = re.search(r'/dl/\d+/([a-z0-9]+)', href, re.IGNORECASE)
                 if match:
                     download_hash = match.group(1)
                     logger.info(f"Found download hash: {download_hash}")
