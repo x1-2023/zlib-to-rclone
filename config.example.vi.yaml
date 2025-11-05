@@ -81,11 +81,13 @@ zlibrary:
     - Chinese
     - English
   
-  # Danh sách proxy (nếu cần)
+  # Danh sách proxy (tuỳ chọn - không bắt buộc)
   # Ví dụ: dùng Tor Browser proxy qua cổng 9050
-  # Để trống [] nếu không dùng proxy
-  proxy_list:
-    - "socks5://127.0.0.1:9050"
+  # ⚠️ QUAN TRỌNG: Để trống [] nếu KHÔNG dùng proxy (khuyên dùng)
+  # Chỉ bật nếu bạn thực sự có Tor/proxy đang chạy!
+  # proxy_list:
+  #   - "socks5://127.0.0.1:9050"
+  proxy_list: []
 
 # ===== CẤU HÌNH LỊCH TRÌNH TỰ ĐỘNG =====
 schedule:
