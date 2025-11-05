@@ -644,7 +644,15 @@ class BookDownloader:
                 'url': url
             }
             logger.info(f"Downloading book ID: {book_id} via zlibrary service (API download_url)")
-            file_path = self.zlibrary_service.download_book(book_data, DOWNLOAD_DIR)
+            
+            # Run download in executor to avoid blocking Discord event loop (266MB file!)
+            loop = asyncio.get_event_loop()
+            file_path = await loop.run_in_executor(
+                None,  # Use default ThreadPoolExecutor
+                self.zlibrary_service.download_book,
+                book_data,
+                DOWNLOAD_DIR
+            )
             
             if not file_path or not os.path.exists(file_path):
                 return {
