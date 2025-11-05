@@ -753,14 +753,33 @@ class ZLibraryDownloadService:
 
                 file_path = output_path / file_name
 
-                # 保存文件
+                # 保存文件 - với progress bar
                 downloaded_size = 0
+                total_size = int(response.headers.get('content-length', 0))
+                
+                # Print initial progress
+                if total_size > 0:
+                    print(f"\n📥 Downloading: {file_name}")
+                    print(f"📦 Total size: {total_size / (1024*1024):.2f} MB")
+                
                 with open(str(file_path), 'wb') as f:
                     for chunk in response.iter_content(chunk_size=8192):
                         if chunk:
                             f.write(chunk)
                             downloaded_size += len(chunk)
-
+                            
+                            # Print progress every 1MB
+                            if total_size > 0 and downloaded_size % (1024 * 1024) < 8192:
+                                percent = (downloaded_size / total_size) * 100
+                                downloaded_mb = downloaded_size / (1024 * 1024)
+                                total_mb = total_size / (1024 * 1024)
+                                # Print with carriage return to overwrite previous line
+                                print(f"\r⬇️  Progress: {percent:.1f}% ({downloaded_mb:.1f}/{total_mb:.1f} MB)", end='', flush=True)
+                
+                # Final newline after progress
+                if total_size > 0:
+                    print()  # New line after progress bar
+                
                 self.logger.info(f"下载完成，实际大小: {downloaded_size:,} bytes")
 
                 self.consecutive_errors = 0
