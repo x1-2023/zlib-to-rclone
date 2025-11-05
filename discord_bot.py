@@ -132,16 +132,25 @@ class BookDownloader:
         Pattern: https://z-library.{domain}/book/{id}/{hash}
                  https://z-library.{domain}/dl/{id}/{hash}
         
-        Note: Hash có thể có query params (?ts=xxx) nên cần strip
+        Supported URL formats:
+        ✅ /book/1269938/e536b6
+        ✅ /book/1269938/e536b6/filename.html
+        ✅ /book/1269938/e536b6?ts=1651
+        ✅ /book/1269938/e536b6?dsource=recommend
+        ✅ /book/1269938/e536b6/title.html?utm_source=google&utm_campaign=xyz
+        ✅ /book/1269938/e536b6#section
+        ✅ /dl/1269938/b88232 (direct download)
         """
-        # Remove query params and fragments
+        # Remove ALL query params (?xxx) and fragments (#xxx)
+        # This handles: ?ts=, ?dsource=, ?utm_source=, ?ref=, etc.
         clean_url = url.split('?')[0].split('#')[0]
         
-        # Pattern 1: /book/{id}/{hash}[/filename.html] (book page)
-        # Supports:
-        # - /book/1269938/e536b6
-        # - /book/1269938/e536b6/basic-english-grammar.html
-        match = re.search(r'/book/(\d+)/([a-f0-9]+)(?:/[^/]+)?', clean_url)
+        # Pattern 1: /book/{id}/{hash}[/optional-filename.ext] (book page)
+        # Regex: /book/(\d+)/([a-z0-9]+)(?:/[^/]+)?
+        #   - (\d+): book ID (digits)
+        #   - ([a-z0-9]+): hash (alphanumeric, case-insensitive)
+        #   - (?:/[^/]+)?: optional non-capturing group for filename
+        match = re.search(r'/book/(\d+)/([a-z0-9]+)(?:/[^/]+)?', clean_url, re.IGNORECASE)
         if match:
             return {
                 'id': match.group(1),
@@ -152,7 +161,8 @@ class BookDownloader:
             }
         
         # Pattern 2: /dl/{id}/{hash} (direct download)
-        match = re.search(r'/dl/(\d+)/([a-f0-9]+)', clean_url)
+        # Note: Some hashes may contain letters beyond a-f (not strictly hex)
+        match = re.search(r'/dl/(\d+)/([a-z0-9]+)', clean_url)
         if match:
             return {
                 'id': match.group(1),
