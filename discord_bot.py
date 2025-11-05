@@ -488,7 +488,14 @@ class BookDownloader:
                 logger.info(f"Searching Z-Library by ISBN: {isbn}")
                 
                 async def search_by_isbn():
-                    # Search with "isbn:" prefix for exact ISBN search
+                    # Try multiple search strategies
+                    # Strategy 1: Search with just ISBN number
+                    paginator = await lib.search(q=isbn, count=5)
+                    await paginator.next()
+                    if paginator.result:
+                        return paginator.result
+                    
+                    # Strategy 2: Try with isbn: prefix
                     paginator = await lib.search(q=f"isbn:{isbn}", count=5)
                     await paginator.next()
                     return paginator.result
@@ -497,30 +504,61 @@ class BookDownloader:
                 
                 if not results:
                     logger.error(f"No results found for ISBN: {isbn}")
-                    return {
-                        'success': False,
-                        'error': f'❌ Không tìm thấy sách với ISBN: {isbn}'
-                    }
+                    # Fallback to get_by_id if ISBN search fails
+                    logger.warning("ISBN search failed, trying get_by_id...")
+                    
+                    async def get_book_by_id():
+                        try:
+                            book = await lib.get_by_id(str(book_id))
+                            return book
+                        except Exception as e:
+                            logger.error(f"get_by_id failed: {e}")
+                            return None
+                    
+                    book_details = asyncio.run(get_book_by_id())
+                    
+                    if not book_details:
+                        return {
+                            'success': False,
+                            'error': f'❌ Không tìm thấy sách (ISBN: {isbn}, ID: {book_id})'
+                        }
+                    
+                    # Got book directly, skip to download
+                    download_url = book_details.get('download_url')
+                    if not download_url:
+                        return {
+                            'success': False,
+                            'error': '❌ Sách không có link download'
+                        }
+                    
+                    title = book_details.get('name', f'Book_{book_id}')
+                    authors = book_details.get('authors', 'Unknown')
+                    extension = book_details.get('extension', 'pdf')
+                    
+                    logger.info(f"Got book via get_by_id: {title}")
+                else:
+                    # ISBN search succeeded - continue normal flow
+                    # ISBN search should return exact match, use first result
+                    book_result = results[0]
+                    logger.info(f"Found book by ISBN: {book_result.get('name', 'Unknown')}")
+                    
+                    # Step 5: Fetch full details with download_url
+                    logger.info(f"Fetching book details...")
+                    book_details = asyncio.run(book_result.fetch())
+                    
+                    download_url = book_details.get('download_url')
+                    if not download_url:
+                        logger.error(f"Book details missing download_url")
+                        return {
+                            'success': False,
+                            'error': '❌ Sách không có link download khả dụng'
+                        }
+                    
+                    title = book_details.get('name', f'Book_{book_id}')
+                    authors = book_details.get('authors', 'Unknown')
+                    extension = book_details.get('extension', 'pdf')
                 
-                # ISBN search should return exact match, use first result
-                book_result = results[0]
-                logger.info(f"Found book by ISBN: {book_result.get('name', 'Unknown')}")
-                
-                # Step 5: Fetch full details with download_url
-                logger.info(f"Fetching book details...")
-                book_details = asyncio.run(book_result.fetch())
-                
-                download_url = book_details.get('download_url')
-                if not download_url:
-                    logger.error(f"Book details missing download_url")
-                    return {
-                        'success': False,
-                        'error': '❌ Sách không có link download khả dụng'
-                    }
-                
-                title = book_details.get('name', f'Book_{book_id}')
-                authors = book_details.get('authors', 'Unknown')
-                extension = book_details.get('extension', 'pdf')
+                logger.info(f"Got fresh download_url: {download_url}")
                 
                 logger.info(f"Got fresh download_url: {download_url}")
                 
