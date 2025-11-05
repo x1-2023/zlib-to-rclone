@@ -304,46 +304,78 @@ class BookDownloader:
             book_id = book_info['id']
             
             # IMPORTANT: Hash in URL expires! We must search to get fresh download_url
-            # Even direct download links (/dl/) have session-specific hashes that expire
-            logger.info(f"Book ID: {book_id} - Searching to get fresh download URL...")
+            # Strategy: Fetch book page -> extract title -> search by title -> get fresh URL
+            logger.info(f"Book ID: {book_id} - Getting book title from page...")
             
             try:
-                # Method 1: Search by exact book ID using zlibrary API
-                # This will return the book with a fresh, valid download_url
+                import requests
+                from bs4 import BeautifulSoup
+                
+                # Step 1: Fetch book page to get title
+                book_page_url = url.split('?')[0].split('#')[0]  # Clean URL
+                if '/dl/' in book_page_url:
+                    # Convert /dl/ to /book/ URL
+                    book_page_url = book_page_url.replace('/dl/', '/book/')
+                
+                logger.info(f"Fetching book page: {book_page_url}")
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+                response = requests.get(book_page_url, headers=headers, timeout=10)
+                response.raise_for_status()
+                
+                soup = BeautifulSoup(response.content, 'html.parser')
+                
+                # Extract title from <h1> or meta tag
+                title_elem = soup.find('h1')
+                if not title_elem:
+                    title_elem = soup.find('meta', property='og:title')
+                    book_title = title_elem.get('content') if title_elem else None
+                else:
+                    book_title = title_elem.text.strip()
+                
+                if not book_title:
+                    logger.error("Could not extract book title from page")
+                    return {
+                        'success': False,
+                        'error': '❌ Không thể lấy thông tin sách từ trang'
+                    }
+                
+                logger.info(f"Found book title: {book_title}")
+                
+                # Step 2: Search by title to get fresh download_url
                 lib = self.zlibrary_service.search_service.lib
                 
-                # Search using the book ID
-                logger.info(f"Searching Z-Library for book ID {book_id}...")
+                logger.info(f"Searching Z-Library for: {book_title}")
                 
-                # Use async search
-                async def search_by_id():
-                    paginator = await lib.search(q=f"{book_id}")
+                async def search_by_title():
+                    paginator = await lib.search(q=book_title, count=5)
                     await paginator.next()
                     return paginator.result
                 
-                results = asyncio.run(search_by_id())
+                results = asyncio.run(search_by_title())
                 
                 if not results:
-                    logger.error(f"No results found for book ID {book_id}")
+                    logger.error(f"No results found for: {book_title}")
                     return {
                         'success': False,
-                        'error': f'❌ Không tìm thấy sách với ID {book_id}\n\n' +
-                                '💡 Vui lòng thử lại hoặc kiểm tra link'
+                        'error': f'❌ Không tìm thấy sách: {book_title}'
                     }
                 
-                # Find the exact book by ID
+                # Step 3: Find exact match by ID
                 book_result = None
                 for result in results:
                     if str(result.get('id')) == str(book_id):
                         book_result = result
+                        logger.info(f"Found exact match by ID: {book_id}")
                         break
                 
                 if not book_result:
-                    # If exact match not found, use first result
-                    logger.warning(f"Exact ID match not found, using first result")
+                    # Use first result if no exact match
+                    logger.warning(f"No exact ID match, using first result")
                     book_result = results[0]
                 
-                # Fetch full book details with download_url
+                # Step 4: Fetch full details with download_url
                 logger.info(f"Fetching book details...")
                 book_details = asyncio.run(book_result.fetch())
                 
@@ -355,19 +387,19 @@ class BookDownloader:
                         'error': '❌ Sách không có link download khả dụng'
                     }
                 
-                title = book_details.get('name', f'Book_{book_id}')
+                title = book_details.get('name', book_title)
                 authors = book_details.get('authors', 'Unknown')
                 extension = book_details.get('extension', 'pdf')
                 
                 logger.info(f"Got fresh download_url: {download_url}")
                 
             except Exception as e:
-                logger.error(f"Error searching for book: {e}")
+                logger.error(f"Error getting fresh download URL: {e}")
                 import traceback
                 traceback.print_exc()
                 return {
                     'success': False,
-                    'error': f'❌ Lỗi khi tìm sách: {str(e)}'
+                    'error': f'❌ Lỗi: {str(e)}'
                 }
             
             # Chuẩn bị book_info cho service
