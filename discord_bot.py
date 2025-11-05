@@ -687,51 +687,66 @@ class BookDownloader:
                 
                 logger.info(f"Using download path from z-bookcard: {found_download_path}")
                 
-                # REAL FINAL SOLUTION:
-                # Use the download path from z-bookcard BUT with authenticated cookies
-                # Get cookies from zlibrary lib's session
+                # ABSOLUTE FINAL SOLUTION:
+                # Hash from z-bookcard is for ANONYMOUS session
+                # We need to fetch book page AGAIN with AUTHENTICATED cookies to get fresh hash!
                 
                 lib = self.zlibrary_service.search_service.lib
                 
-                # Build full download URL with the hash from z-bookcard
-                # This hash is fresh from the search results
-                download_url = f"https://z-library.ec{best_match.get('download', found_download_path)}"
-                
-                logger.info(f"Download URL with fresh hash: {download_url}")
-                
                 # Get authenticated cookies from lib
                 cookies_dict = {}
-                
-                logger.info(f"DEBUG: lib={lib}")
-                logger.info(f"DEBUG: hasattr(lib, 'session')={hasattr(lib, 'session')}")
-                
-                if hasattr(lib, 'session') and lib.session:
-                    logger.info(f"DEBUG: lib.session={lib.session}")
-                    logger.info(f"DEBUG: lib.session.cookies={lib.session.cookies}")
-                    
-                    # Try to extract cookies - aiohttp cookies have different structure
-                    try:
-                        # aiohttp SimpleCookie format
-                        if hasattr(lib.session.cookies, 'items'):
-                            cookies_dict = {k: v.value for k, v in lib.session.cookie_jar}
-                        else:
-                            cookies_dict = {cookie.name: cookie.value for cookie in lib.session.cookies}
-                        logger.info(f"Extracted {len(cookies_dict)} cookies from authenticated session")
-                        logger.info(f"Cookie keys: {list(cookies_dict.keys())}")
-                    except Exception as e:
-                        logger.error(f"Failed to extract cookies: {e}")
-                        import traceback
-                        logger.error(traceback.format_exc())
-                else:
-                    logger.warning("lib.session not available")
-                
-                # Also try lib.cookies directly (AsyncZlib has this)
-                if not cookies_dict and hasattr(lib, 'cookies') and lib.cookies:
-                    logger.info("Trying lib.cookies directly")
+                if hasattr(lib, 'cookies') and lib.cookies:
                     cookies_dict = lib.cookies
                     logger.info(f"Got {len(cookies_dict)} cookies from lib.cookies")
                 
-                # Store cookies in book_data so download_service can use them
+                if not cookies_dict:
+                    logger.error("No cookies available - download will fail!")
+                    return {
+                        'success': False,
+                        'error': '❌ Không thể lấy authenticated cookies từ zlibrary session'
+                    }
+                
+                # Fetch book page AGAIN with authenticated cookies to get fresh download hash
+                book_page_url = f"https://z-library.ec/book/{found_book_id}"
+                logger.info(f"Fetching book page with authenticated cookies: {book_page_url}")
+                
+                try:
+                    import requests
+                    from bs4 import BeautifulSoup
+                    
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Cookie': "; ".join([f"{k}={v}" for k, v in cookies_dict.items()])
+                    }
+                    
+                    auth_response = requests.get(book_page_url, headers=headers, timeout=10)
+                    auth_response.raise_for_status()
+                    
+                    auth_soup = BeautifulSoup(auth_response.content, 'html.parser')
+                    
+                    # Find download button with authenticated hash
+                    download_btn = auth_soup.find('a', class_='addDownloadedBook')
+                    if not download_btn:
+                        logger.error("Could not find download button on authenticated page")
+                        return {
+                            'success': False,
+                            'error': '❌ Không tìm thấy nút download trên trang sách'
+                        }
+                    
+                    auth_download_path = download_btn.get('href')  # /dl/ID/AUTH_HASH
+                    logger.info(f"Got authenticated download path: {auth_download_path}")
+                    
+                    download_url = f"https://z-library.ec{auth_download_path}"
+                    logger.info(f"Final download URL with authenticated hash: {download_url}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to get authenticated download URL: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    return {
+                        'success': False,
+                        'error': f'❌ Lỗi khi lấy authenticated download URL: {str(e)}'
+                    }
                 
             except Exception as e:
                 logger.error(f"Error getting fresh download URL: {e}")
@@ -952,11 +967,14 @@ async def process_download_request(interaction_or_ctx, url: str, is_slash: bool 
         status_msg = await interaction_or_ctx.send(f"⏳ Đang xử lý request của {author.mention}...")
     
     try:
-        # Bước 1: Download
+        # Send initial status message (will be edited throughout)
         if is_slash:
-            await interaction_or_ctx.followup.send(f"📥 **[1/4]** Đang download sách từ Z-Library...\n⏳ Request từ {author.mention}")
+            status_msg = await interaction_or_ctx.followup.send(
+                f"📥 **[1/4]** Đang download sách từ Z-Library...\n⏳ Request từ {author.mention}",
+                wait=True  # Wait to get message object for editing
+            )
         else:
-            await status_msg.edit(content="📥 **[1/4]** Đang download sách từ Z-Library...")
+            await status_msg.edit(content=f"📥 **[1/4]** Đang download sách từ Z-Library...\n⏳ Request từ {author.mention}")
         
         logger.info(f"User {author} yêu cầu download: {url}")
         
@@ -964,38 +982,27 @@ async def process_download_request(interaction_or_ctx, url: str, is_slash: bool 
         
         if not download_result['success']:
             error_msg = f"❌ **Download thất bại:**\n```{download_result['error']}```"
-            if is_slash:
-                await interaction_or_ctx.followup.send(error_msg)
-            else:
-                await status_msg.edit(content=error_msg)
+            await status_msg.edit(content=error_msg)
             return
         
         file_path = download_result['file_path']
         file_name = download_result['file_name']
         file_size_mb = download_result['file_size'] / (1024 * 1024)
         
-        # Bước 2: Upload lên Google Drive
-        upload_msg = f"☁️ **[2/4]** Đang upload `{file_name}` ({file_size_mb:.2f} MB) lên Google Drive..."
-        if is_slash:
-            await interaction_or_ctx.followup.send(upload_msg)
-        else:
-            await status_msg.edit(content=upload_msg)
+        # Bước 2: Upload lên Google Drive (edit same message)
+        upload_msg = f"☁️ **[2/4]** Đang upload `{file_name}` ({file_size_mb:.2f} MB) lên Google Drive...\n⏳ Request từ {author.mention}"
+        await status_msg.edit(content=upload_msg)
         
         upload_result = await uploader.upload_file(file_path)
         
         if not upload_result['success']:
             error_msg = f"❌ **Upload thất bại:**\n```{upload_result['error']}```"
-            if is_slash:
-                await interaction_or_ctx.followup.send(error_msg)
-            else:
-                await status_msg.edit(content=error_msg)
+            await status_msg.edit(content=error_msg)
             return
         
-        # Bước 3: Tạo message kết quả
-        if is_slash:
-            await interaction_or_ctx.followup.send("📋 **[3/4]** Đang tạo thông tin chia sẻ...")
-        else:
-            await status_msg.edit(content="📋 **[3/4]** Đang tạo thông tin chia sẻ...")
+        # Bước 3: Tạo public link (edit same message)
+        link_msg = f"� **[3/4]** Đang tạo public link...\n⏳ Request từ {author.mention}"
+        await status_msg.edit(content=link_msg)
         
         embed = discord.Embed(
             title="✅ Download & Upload Thành Công!",
@@ -1019,34 +1026,26 @@ async def process_download_request(interaction_or_ctx, url: str, is_slash: bool 
         
         embed.set_footer(text=f"Requested by {author.name}", icon_url=author.avatar.url if author.avatar else None)
         
-        if is_slash:
-            await interaction_or_ctx.followup.send(embed=embed)
-        else:
-            await status_msg.edit(content=None, embed=embed)
-        
-        # Bước 4: Cleanup (xóa file local nếu được bật)
+        # Bước 4: Cleanup (xóa file local nếu được bật) - edit status message
         if AUTO_DELETE_AFTER_UPLOAD:
-            await asyncio.sleep(2)
+            cleanup_msg = f"🗑️ **[4/4]** Đang xóa file tạm trên VPS...\n⏳ Request từ {author.mention}"
+            await status_msg.edit(content=cleanup_msg)
+            await asyncio.sleep(1)
             try:
                 os.remove(file_path)
                 logger.info(f"Đã xóa file local: {file_path}")
-                cleanup_msg = f"🗑️ **[4/4]** Đã xóa file tạm trên VPS"
-                if is_slash:
-                    await interaction_or_ctx.followup.send(cleanup_msg)
-                else:
-                    await interaction_or_ctx.send(cleanup_msg)
             except Exception as e:
                 logger.warning(f"Không thể xóa file: {e}")
+        
+        # Final result - edit same message with embed
+        await status_msg.edit(content=None, embed=embed)
         
         logger.info(f"Hoàn thành request cho user {author}: {file_name}")
         
     except Exception as e:
-        logger.error(f"Lỗi khi xử lý command: {e}")
+        logger.error(f"Lỗi khi xử lý command: {e}", exc_info=True)
         error_msg = f"❌ **Lỗi không mong muốn:**\n```{str(e)}```"
-        if is_slash:
-            await interaction_or_ctx.followup.send(error_msg)
-        else:
-            await status_msg.edit(content=error_msg)
+        await status_msg.edit(content=error_msg)
 
 
 # ===== SLASH COMMANDS =====
