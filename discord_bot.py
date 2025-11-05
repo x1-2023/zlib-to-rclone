@@ -310,6 +310,11 @@ class BookDownloader:
                 # Get AsyncZlib instance from search service
                 lib = self.zlibrary_service.search_service.lib
                 
+                # Force .ec domain (must set every time as library might reset)
+                lib.domain = 'https://z-library.ec/'
+                lib.login_domain = 'https://z-library.ec/rpc.php'
+                logger.info(f"Using zlibrary domain: {lib.domain}")
+                
                 # Fetch book details with download_url using get_by_id
                 logger.info(f"Fetching book details from zlibrary lib...")
                 book_details = asyncio.run(lib.get_by_id(book_id))
