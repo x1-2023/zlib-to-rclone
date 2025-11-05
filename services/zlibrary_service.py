@@ -108,12 +108,12 @@ class ZLibrarySearchService:
                     self.logger.info(
                         f'开始登陆Zlibrary (尝试 {attempt}/{max_retries})')
                     self.lib = zlibrary.AsyncZlib(proxy_list=self.proxy_list)
-                    # Force use .ec domain instead of default .sk
-                    self.lib.domain = 'https://z-library.ec/'
-                    self.lib.login_domain = 'https://z-library.ec/rpc.php'
-                    self.logger.info(f'Setting zlibrary domain to: {self.lib.domain}')
+                    # Login first - zlibrary will assign personal domain
                     asyncio.run(self.lib.login(self.__email, self.__password))
                     self.logger.info('Zlibrary登录成功')
+                    # Log the domain assigned after login (should be personal subdomain)
+                    self.logger.info(f'Personal domain after login: {self.lib.domain}')
+                    self.logger.info(f'Mirror: {self.lib.mirror if hasattr(self.lib, "mirror") else "N/A"}')
                 # 无论是新创建连接还是已有连接，都应该返回True
                 return True
 
@@ -570,12 +570,11 @@ class ZLibraryDownloadService:
                     self.logger.info(
                         f'开始登陆Zlibrary (尝试 {attempt}/{max_retries})')
                     self.lib = zlibrary.AsyncZlib(proxy_list=self.proxy_list)
-                    # Force use .ec domain instead of default .sk
-                    self.lib.domain = 'https://z-library.ec/'
-                    self.lib.login_domain = 'https://z-library.ec/rpc.php'
-                    self.logger.info(f'Setting zlibrary domain to: {self.lib.domain}')
+                    # Login first - zlibrary will assign personal domain
                     asyncio.run(self.lib.login(self.__email, self.__password))
                     self.logger.info('Zlibrary登录成功')
+                    # Log the domain assigned after login
+                    self.logger.info(f'Personal domain after login: {self.lib.domain}')
                 # 无论是新创建连接还是已有连接，都应该返回True
                 return True
 

@@ -304,69 +304,34 @@ class BookDownloader:
             book_id = book_info['id']
             
             # IMPORTANT: Hash in URL expires! We must search to get fresh download_url
-            # Strategy: Fetch book page -> extract title -> search by title -> get fresh URL
-            logger.info(f"Book ID: {book_id} - Getting book title from page...")
+            # Strategy: Extract title from URL filename -> search by title -> match by ID
+            logger.info(f"Book ID: {book_id}")
             
             try:
-                import requests
-                from bs4 import BeautifulSoup
+                # Step 1: Extract book title from URL filename (if available)
+                # Example: /book/1269938/e536b6/basic-english-grammar.html
+                #          → "basic english grammar"
+                book_title = None
+                url_parts = url.split('?')[0].split('#')[0].split('/')
                 
-                # Step 1: Get authenticated zlibrary lib to access personal domain
-                lib = self.zlibrary_service.search_service.lib
-                
-                # After login, lib should have personal domain (e.g., https://abc123.z-library.sk)
-                # Use that instead of public .ec domain
-                personal_domain = lib.domain if hasattr(lib, 'domain') else None
-                
-                # Construct book page URL with personal domain
-                if personal_domain and personal_domain.startswith('http'):
-                    # Use personal domain
-                    base_domain = personal_domain.rstrip('/')
-                    book_page_url = f"{base_domain}/book/{book_id}"
-                    logger.info(f"Using personal domain: {base_domain}")
-                else:
-                    # Fallback to URL from user (may not work)
-                    book_page_url = url.split('?')[0].split('#')[0]
-                    if '/dl/' in book_page_url:
-                        book_page_url = book_page_url.replace('/dl/', '/book/')
-                    logger.warning(f"No personal domain found, using: {book_page_url}")
-                
-                logger.info(f"Fetching book page: {book_page_url}")
-                
-                # Use zlibrary lib's cookies for authenticated request
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                }
-                
-                # Get cookies from zlibrary lib session
-                cookies_dict = {}
-                if hasattr(lib, 'cookies') and lib.cookies:
-                    cookies_dict = dict(lib.cookies)
-                    logger.info(f"Using authenticated cookies: {len(cookies_dict)} cookies")
-                
-                response = requests.get(book_page_url, headers=headers, cookies=cookies_dict, timeout=10)
-                response.raise_for_status()
-                
-                soup = BeautifulSoup(response.content, 'html.parser')
-                
-                # Extract title from <h1> or meta tag
-                title_elem = soup.find('h1')
-                if not title_elem:
-                    title_elem = soup.find('meta', property='og:title')
-                    book_title = title_elem.get('content') if title_elem else None
-                else:
-                    book_title = title_elem.text.strip()
+                # Look for filename part (last element ending with .html or similar)
+                for part in reversed(url_parts):
+                    if part and '.' in part:
+                        # Remove extension and convert to readable title
+                        filename = part.rsplit('.', 1)[0]
+                        # Replace hyphens/underscores with spaces
+                        book_title = filename.replace('-', ' ').replace('_', ' ').strip()
+                        if book_title and len(book_title) > 3:  # Valid title
+                            logger.info(f"Extracted title from URL: {book_title}")
+                            break
                 
                 if not book_title:
-                    logger.error("Could not extract book title from page")
-                    return {
-                        'success': False,
-                        'error': '❌ Không thể lấy thông tin sách từ trang'
-                    }
+                    # No filename in URL, just use book ID to search
+                    logger.warning("No title in URL, will search by ID only")
+                    book_title = str(book_id)
                 
-                logger.info(f"Found book title: {book_title}")
-                
-                # Step 2: Search by title to get fresh download_url
+                # Step 2: Get zlibrary lib and search by title
+                lib = self.zlibrary_service.search_service.lib
                 logger.info(f"Searching Z-Library for: {book_title}")
                 
                 async def search_by_title():
