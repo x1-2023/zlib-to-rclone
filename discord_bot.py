@@ -131,9 +131,14 @@ class BookDownloader:
         Hỗ trợ các domain: .ec, .se, .is, .sk, ...
         Pattern: https://z-library.{domain}/book/{id}/{hash}
                  https://z-library.{domain}/dl/{id}/{hash}
+        
+        Note: Hash có thể có query params (?ts=xxx) nên cần strip
         """
+        # Remove query params and fragments
+        clean_url = url.split('?')[0].split('#')[0]
+        
         # Pattern 1: /book/{id}/{hash}
-        match = re.search(r'/book/(\d+)/([a-f0-9]+)', url)
+        match = re.search(r'/book/(\d+)/([a-f0-9]+)', clean_url)
         if match:
             return {
                 'id': match.group(1),
@@ -144,7 +149,7 @@ class BookDownloader:
             }
         
         # Pattern 2: /dl/{id}/{hash} (direct download)
-        match = re.search(r'/dl/(\d+)/([a-f0-9]+)', url)
+        match = re.search(r'/dl/(\d+)/([a-f0-9]+)', clean_url)
         if match:
             return {
                 'id': match.group(1),
@@ -163,6 +168,43 @@ class BookDownloader:
         if match:
             return match.group(1)
         return 'z-library.ec'  # Default
+    
+    async def _get_download_hash_from_page(self, book_page_url: str) -> Optional[str]:
+        """
+        Parse book page HTML để lấy download hash thật từ download button
+        
+        Returns:
+            str: Download hash (e.g., 'b88232') hoặc None nếu không tìm thấy
+        """
+        try:
+            import requests
+            from bs4 import BeautifulSoup
+            
+            logger.info(f"Fetching book page: {book_page_url}")
+            response = requests.get(book_page_url, timeout=10)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Tìm download link trong page
+            # Pattern 1: <a href="/dl/{id}/{hash}">Download</a>
+            download_link = soup.find('a', href=re.compile(r'/dl/\d+/[a-f0-9]+'))
+            
+            if download_link:
+                href = download_link.get('href')
+                # Extract hash from /dl/{id}/{hash}
+                match = re.search(r'/dl/\d+/([a-f0-9]+)', href)
+                if match:
+                    download_hash = match.group(1)
+                    logger.info(f"Found download hash: {download_hash}")
+                    return download_hash
+            
+            logger.warning("Could not find download link in book page")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error parsing book page: {e}")
+            return None
     
     async def download_book(self, url: str) -> Optional[dict]:
         """
@@ -197,11 +239,20 @@ class BookDownloader:
                 download_url = url
                 title = f"Book_{book_info['id']}"
             else:
-                # Nếu là book page, cần tạo download URL
-                # Sử dụng cùng domain với URL gốc
-                download_url = f"https://{domain}/dl/{book_info['id']}/{book_info['hash']}"
-                title = f"Book_{book_info['id']}"
-                logger.info(f"Tạo download URL từ book page: {download_url}")
+                # Nếu là book page, cần parse HTML để lấy hash thật
+                logger.info(f"Book page detected, fetching real download hash...")
+                real_hash = await self._get_download_hash_from_page(url)
+                
+                if real_hash:
+                    # Dùng hash thật từ download button
+                    download_url = f"https://{domain}/dl/{book_info['id']}/{real_hash}"
+                    title = f"Book_{book_info['id']}"
+                    logger.info(f"Using real download hash: {download_url}")
+                else:
+                    # Fallback: thử dùng hash từ URL (có thể không work)
+                    download_url = f"https://{domain}/dl/{book_info['id']}/{book_info['hash']}"
+                    title = f"Book_{book_info['id']}"
+                    logger.warning(f"Could not get real hash, using URL hash (may fail): {download_url}")
             
             # Chuẩn bị book_info cho service
             book_data = {
