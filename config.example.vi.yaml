@@ -66,8 +66,8 @@ zlibrary:
   password: "your_password"
   
   # Thứ tự ưu tiên định dạng file khi download
-  # Sẽ thử download theo thứ tự này: epub trước, không có thì mobi, rồi azw3, cuối cùng pdf
-  format_priority: ["epub", "mobi", "azw3", "pdf"]
+  # Sẽ thử download theo thứ tự này: PDF trước, không có thì epub, rồi mobi, cuối cùng azw3
+  format_priority: ["pdf", "epub", "mobi", "azw3"]
   
   # Thư mục lưu file download về
   download_dir: "data/downloads"
