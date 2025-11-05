@@ -311,17 +311,40 @@ class BookDownloader:
                 import requests
                 from bs4 import BeautifulSoup
                 
-                # Step 1: Fetch book page to get title
-                book_page_url = url.split('?')[0].split('#')[0]  # Clean URL
-                if '/dl/' in book_page_url:
-                    # Convert /dl/ to /book/ URL
-                    book_page_url = book_page_url.replace('/dl/', '/book/')
+                # Step 1: Get authenticated zlibrary lib to access personal domain
+                lib = self.zlibrary_service.search_service.lib
+                
+                # After login, lib should have personal domain (e.g., https://abc123.z-library.sk)
+                # Use that instead of public .ec domain
+                personal_domain = lib.domain if hasattr(lib, 'domain') else None
+                
+                # Construct book page URL with personal domain
+                if personal_domain and personal_domain.startswith('http'):
+                    # Use personal domain
+                    base_domain = personal_domain.rstrip('/')
+                    book_page_url = f"{base_domain}/book/{book_id}"
+                    logger.info(f"Using personal domain: {base_domain}")
+                else:
+                    # Fallback to URL from user (may not work)
+                    book_page_url = url.split('?')[0].split('#')[0]
+                    if '/dl/' in book_page_url:
+                        book_page_url = book_page_url.replace('/dl/', '/book/')
+                    logger.warning(f"No personal domain found, using: {book_page_url}")
                 
                 logger.info(f"Fetching book page: {book_page_url}")
+                
+                # Use zlibrary lib's cookies for authenticated request
                 headers = {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                 }
-                response = requests.get(book_page_url, headers=headers, timeout=10)
+                
+                # Get cookies from zlibrary lib session
+                cookies_dict = {}
+                if hasattr(lib, 'cookies') and lib.cookies:
+                    cookies_dict = dict(lib.cookies)
+                    logger.info(f"Using authenticated cookies: {len(cookies_dict)} cookies")
+                
+                response = requests.get(book_page_url, headers=headers, cookies=cookies_dict, timeout=10)
                 response.raise_for_status()
                 
                 soup = BeautifulSoup(response.content, 'html.parser')
@@ -344,8 +367,6 @@ class BookDownloader:
                 logger.info(f"Found book title: {book_title}")
                 
                 # Step 2: Search by title to get fresh download_url
-                lib = self.zlibrary_service.search_service.lib
-                
                 logger.info(f"Searching Z-Library for: {book_title}")
                 
                 async def search_by_title():
