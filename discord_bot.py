@@ -685,48 +685,18 @@ class BookDownloader:
                 authors = best_match.get('author', 'Unknown')
                 extension = best_match.get('format', 'pdf')
                 
-                logger.info(f"Getting download URL for book ID: {found_book_id}")
+                logger.info(f"Building download URL for book ID: {found_book_id}")
                 
-                # Use zlibrary lib to get authenticated download URL
-                lib = self.zlibrary_service.search_service.lib
+                # FINAL SOLUTION: Don't use get_by_id() at all!
+                # Build download URL manually and use lib's authenticated session
+                # Pattern: https://z-library.ec/book/ID will redirect to download
                 
-                async def get_download_url():
-                    try:
-                        # Call get_by_id on .ec domain (not .sk!)
-                        # Force domain to .ec by temporarily changing lib domain
-                        original_domain = lib.domain
-                        lib.domain = "https://z-library.ec"
-                        
-                        book = await lib.get_by_id(str(found_book_id))
-                        
-                        # Restore original domain
-                        lib.domain = original_domain
-                        
-                        return book
-                    except Exception as e:
-                        logger.error(f"get_by_id failed: {e}")
-                        # Restore domain even on error
-                        lib.domain = original_domain
-                        return None
+                # Create a simple book_data dict with the info we have
+                # The zlibrary download service will handle getting the actual file
+                download_url = f"https://z-library.ec/book/{found_book_id}"
                 
-                book_details = asyncio.run(get_download_url())
-                
-                if not book_details:
-                    logger.error(f"Failed to get book details for ID: {found_book_id}")
-                    return {
-                        'success': False,
-                        'error': f'❌ Không thể lấy thông tin download cho sách ID: {found_book_id}'
-                    }
-                
-                download_url = book_details.get('download_url')
-                if not download_url:
-                    logger.error("Book found but no download_url")
-                    return {
-                        'success': False,
-                        'error': '❌ Sách không có link download'
-                    }
-                
-                logger.info(f"Got authenticated download_url: {download_url}")
+                logger.info(f"Using book page URL as download URL: {download_url}")
+                logger.info(f"Download will be handled by zlibrary_service with authenticated session")
                 
             except Exception as e:
                 logger.error(f"Error getting fresh download URL: {e}")
