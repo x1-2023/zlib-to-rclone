@@ -20,6 +20,7 @@ from typing import Optional
 
 import discord
 from discord.ext import commands
+import yaml
 
 # Import các module từ project
 from config.config_manager import ConfigManager
@@ -75,6 +76,53 @@ class BookDownloader:
         
         os.makedirs(DOWNLOAD_DIR, exist_ok=True)
         logger.info("BookDownloader initialized")
+    
+    def reload_credentials(self, username: str, password: str):
+        """
+        Reload Z-Library credentials without restarting bot
+        
+        Args:
+            username: Z-Library email
+            password: Z-Library password
+        """
+        try:
+            # Update config file
+            import yaml
+            config_path = "config.yaml"
+            
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config_data = yaml.safe_load(f)
+            
+            # Update zlibrary section
+            if 'zlibrary' not in config_data:
+                config_data['zlibrary'] = {}
+            
+            config_data['zlibrary']['username'] = username
+            config_data['zlibrary']['password'] = password
+            
+            # Write back to file
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config_data, f, default_flow_style=False, allow_unicode=True)
+            
+            # Reload ConfigManager
+            self.config_manager = ConfigManager(config_path)
+            zlib_config = self.config_manager.get_zlibrary_config()
+            
+            # Recreate ZLibraryService with new credentials
+            self.zlibrary_service = ZLibraryService(
+                email=username,
+                password=password,
+                proxy_list=zlib_config.get('proxy_list'),
+                format_priority=zlib_config.get('format_priority', ['pdf', 'epub', 'mobi']),
+                download_dir=DOWNLOAD_DIR
+            )
+            
+            logger.info(f"Credentials reloaded for user: {username}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to reload credentials: {e}")
+            return False
     
     def extract_book_info_from_url(self, url: str) -> Optional[dict]:
         """
@@ -499,6 +547,67 @@ async def slash_quota(interaction: discord.Interaction):
         await interaction.followup.send(f"❌ Không thể lấy thông tin quota: {str(e)}")
 
 
+@bot.tree.command(name="set_credentials", description="🔑 Thay đổi Z-Library credentials (khi hết quota)")
+async def slash_set_credentials(interaction: discord.Interaction, email: str, password: str):
+    """
+    Slash command: /set_credentials <email> <password>
+    
+    Thay đổi Z-Library account credentials
+    Hữu ích khi account hiện tại hết quota
+    
+    Parameters:
+        email: Z-Library email/username
+        password: Z-Library password
+    """
+    # Check if user has permission (optional - có thể thêm role check)
+    # if not interaction.user.guild_permissions.administrator:
+    #     await interaction.response.send_message("❌ Chỉ admin mới có thể thay đổi credentials!", ephemeral=True)
+    #     return
+    
+    await interaction.response.defer(ephemeral=True)  # Response riêng tư (chỉ user thấy)
+    
+    try:
+        # Reload credentials
+        success = downloader.reload_credentials(email, password)
+        
+        if success:
+            # Get new quota info
+            try:
+                limits = downloader.zlibrary_service.get_download_limits()
+                quota_info = (
+                    f"\n\n📊 **New Account Quota:**\n"
+                    f"• Daily Limit: {limits.get('daily_amount', 'N/A')}\n"
+                    f"• Remaining: {limits.get('daily_remaining', 'N/A')}\n"
+                    f"• Next Reset: {limits.get('daily_reset', 'N/A')}"
+                )
+            except:
+                quota_info = ""
+            
+            await interaction.followup.send(
+                f"✅ **Credentials Updated Successfully!**\n"
+                f"📧 New account: `{email}`\n"
+                f"🔐 Password: `{'*' * len(password)}`"
+                f"{quota_info}",
+                ephemeral=True
+            )
+            
+            logger.info(f"Credentials changed by {interaction.user.name} to {email}")
+            
+        else:
+            await interaction.followup.send(
+                f"❌ **Failed to update credentials!**\n"
+                f"Check logs for details.",
+                ephemeral=True
+            )
+    
+    except Exception as e:
+        logger.error(f"Error changing credentials: {e}")
+        await interaction.followup.send(
+            f"❌ **Error:**\n```{str(e)}```",
+            ephemeral=True
+        )
+
+
 @bot.tree.command(name="ping", description="🏓 Kiểm tra bot có hoạt động không")
 async def slash_ping(interaction: discord.Interaction):
     """Slash command: /ping"""
@@ -520,6 +629,7 @@ async def slash_help(interaction: discord.Interaction):
         value=(
             "`/download <url>` - Download và upload sách\n"
             "`/quota` - Kiểm tra quota còn lại\n"
+            "`/set_credentials <email> <password>` - Đổi Z-Library account\n"
             "`/ping` - Test bot\n"
             "`/help` - Xem hướng dẫn này"
         ),
