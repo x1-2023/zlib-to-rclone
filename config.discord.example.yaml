@@ -1,0 +1,54 @@
+# ========================================
+# Discord Bot Configuration (Minimal)
+# ========================================
+# This is a simplified config for Discord bot usage only
+# Copy this to config.yaml and fill in your credentials
+
+# Z-Library Configuration (REQUIRED)
+zlibrary:
+  # Your Z-Library account email
+  username: "your_email@example.com"
+  
+  # Your Z-Library account password
+  password: "your_password"
+  
+  # Download format priority (PDF first recommended)
+  format_priority: ["pdf", "epub", "mobi", "azw3"]
+  
+  # Download directory (temporary storage)
+  download_dir: "data/downloads"
+  
+  # Maximum retry attempts on failure
+  max_retries: 3
+  
+  # Language priority for book search
+  language_priority:
+    - Chinese
+    - English
+  
+  # Proxy configuration (OPTIONAL - leave empty if not using)
+  # WARNING: Only enable if you have Tor/SOCKS5 proxy running!
+  # Most users should leave this as empty array []
+  proxy_list: []
+  
+  # Example with proxy (uncomment if needed):
+  # proxy_list:
+  #   - "socks5://127.0.0.1:9050"
+
+# Database Configuration (OPTIONAL - for book tracking)
+database:
+  type: "sqlite"
+  path: "data/books.db"
+
+# Logging Configuration (OPTIONAL)
+logging:
+  level: "INFO"
+  file: "logs/app.log"
+  console: true
+  retention_days: 30
+
+# System Configuration (OPTIONAL)
+system:
+  temp_dir: "data/temp"
+  debug: false
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"

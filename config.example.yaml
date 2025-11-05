@@ -1,93 +1,100 @@
-# 豆瓣书单同步与 Calibre 集成自动化配置文件示例
+# ========================================
+# Auto Book Management - Configuration
+# ========================================
+# Discord Bot + Z-Library + Rclone Integration
+# For downloading books and uploading to Google Drive
 
-# 豆瓣配置
+# Douban Configuration (for book list sync)
 douban:
-  # 豆瓣网站 Cookie，用于访问个人书单
-  # 获取方法：登录豆瓣网站后，从浏览器开发者工具中复制 Cookie
+  # Douban website cookie for accessing personal book lists
+  # How to get: Login to Douban, copy cookie from browser DevTools
   cookie: "bid=xxxx; dbcl2=xxxx; push_noty_num=0; push_doumail_num=0"
-  # 想读书单 URL，默认为个人的想读书单
+  # Wishlist URL (default: personal wishlist)
   wishlist_url: "https://book.douban.com/people/me/wish"
-  # 爬取页数限制，设为 0 表示爬取所有页
+  # Max pages to crawl (0 = all pages)
   max_pages: 0
 
-# 数据库配置
+# Database Configuration
 database:
-  # 数据库类型：sqlite 或 postgresql
+  # Database type: sqlite or postgresql
   type: "sqlite"
-  # SQLite 数据库文件路径（仅 type=sqlite 时使用）
+  # SQLite database file path (only for type=sqlite)
   path: "data/books.db"
-  # PostgreSQL 配置（仅 type=postgresql 时使用）
+  # PostgreSQL config (only for type=postgresql)
   host: "localhost"
   port: 5432
   dbname: "douban_books"
   username: "postgres"
   password: "password"
 
-# Calibre 配置
+# Calibre Configuration
 calibre:
   # Calibre Content Server URL
   content_server_url: "http://localhost:8080"
-  # Calibre Content Server 用户名
+  # Calibre Content Server username
   username: "admin"
-  # Calibre Content Server 密码
+  # Calibre Content Server password
   password: "password"
-  # 匹配阈值，0.0-1.0，值越高要求匹配度越精确
+  # Match threshold (0.0-1.0, higher = more precise matching)
   match_threshold: 0.6
 
-# Z-Library 配置
+# Z-Library Configuration
 zlibrary:
-  # Z-Library 账号
+  # Z-Library account email
   username: "your_email@example.com"
-  # Z-Library 密码
+  # Z-Library account password
   password: "your_password"
-  # 下载格式优先级，按顺序尝试下载
+  # Download format priority (will try in order)
+  # Recommended: PDF first for universal compatibility
   format_priority: ["pdf", "epub", "mobi", "azw3"]
-  # 下载目录，用于临时存储下载的文件
+  # Download directory for temporary storage
   download_dir: "data/downloads"
-  # 最大重试次数
+  # Maximum retry attempts
   max_retries: 3
+  # Language priority for search
   language_priority:
     - Chinese
     - English
-  # Proxy list (optional) - Comment out if not using proxy
+  # Proxy list (optional) - LEAVE EMPTY [] if not using proxy
+  # Only enable if you have Tor/SOCKS5 proxy running
   # proxy_list:
   #   - "socks5://127.0.0.1:9050"
   proxy_list: []
 
-# 调度配置
+# Schedule Configuration
 schedule:
-  # 每日执行时间，24小时制
+  # Daily execution time (24-hour format)
   time: "03:00"
-  # 是否在启动时立即执行一次
+  # Run immediately at startup?
   run_at_startup: false
-  # 失败重试间隔（分钟）
+  # Retry interval on failure (minutes)
   retry_interval: 60
 
-# 飞书通知配置
+# Lark (Feishu) Notification Configuration
 lark:
-  # 飞书机器人 Webhook URL
+  # Lark bot webhook URL
   webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-  # 是否启用通知
+  # Enable notifications?
   enabled: true
-  # 通知级别：all（所有消息）, success（成功消息）, error（错误消息）
+  # Notification level: all, success, error
   level: "all"
 
-# 日志配置
+# Logging Configuration
 logging:
-  # 日志级别：DEBUG, INFO, WARNING, ERROR, CRITICAL
+  # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
   level: "INFO"
-  # 日志文件路径
+  # Log file path
   file: "logs/app.log"
-  # 是否同时输出到控制台
+  # Also output to console?
   console: true
-  # 日志保留天数
+  # Log retention days
   retention_days: 30
 
-# 系统配置
+# System Configuration
 system:
-  # 临时文件目录
+  # Temporary files directory
   temp_dir: "data/temp"
-  # 是否启用调试模式
+  # Enable debug mode?
   debug: false
-  # 用户代理字符串，模拟浏览器访问
+  # User agent string (simulate browser)
   user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
