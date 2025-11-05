@@ -483,96 +483,26 @@ class BookDownloader:
                         'remote_path': upload_result['remote_path']
                     }
                 
-                # Step 4: Search by ISBN on Z-Library website (crawl search results)
-                # ISBN search on web: https://z-library.ec/s/9780194420884
-                search_url = f"https://z-library.ec/s/{isbn}"
-                logger.info(f"Searching Z-Library web for ISBN: {search_url}")
+                # Step 4: Search by ISBN using zlibrary API (proper way!)
+                # Use zlibrary_service.search_books(isbn=...) instead of web crawling
+                logger.info(f"Searching Z-Library API for ISBN: {isbn}")
                 
                 try:
-                    search_response = requests.get(search_url, headers=headers, timeout=10)
-                    search_response.raise_for_status()
+                    # Use authenticated zlibrary API (handles session automatically)
+                    # search_books returns List[Dict] with authenticated download_url
+                    search_results = self.zlibrary_service.search_books(isbn=isbn)
                     
-                    # Save search HTML for debugging
-                    debug_search_html = "data/temp/debug_search.html"
-                    os.makedirs(os.path.dirname(debug_search_html), exist_ok=True)
-                    with open(debug_search_html, 'w', encoding='utf-8') as f:
-                        f.write(search_response.text)
-                    logger.info(f"Saved search HTML to {debug_search_html}")
-                    
-                    search_soup = BeautifulSoup(search_response.content, 'html.parser')
-                    
-                    # Z-Library uses custom web components: <z-bookcard>
-                    # Extract book info from z-bookcard attributes
-                    bookcards = search_soup.find_all('z-bookcard')
-                    logger.info(f"Found {len(bookcards)} z-bookcard element(s)")
-                    
-                    book_links = []
-                    for card in bookcards:
-                        # z-bookcard has these important attributes:
-                        # - id="11948830" (book ID)
-                        # - isbn="9780194420884"  
-                        # - href="/book/11948830/2c2f55/oxford-english-grammar-course-basic.html"
-                        # - extension="pdf"
-                        # - title in <div slot="title">
-                        # - author in <div slot="author">
-                        
-                        card_id = card.get('id')
-                        card_isbn = card.get('isbn')
-                        card_href = card.get('href')
-                        card_download = card.get('download')  # /dl/ID/hash
-                        card_ext = card.get('extension', '').lower()
-                        
-                        # Get title from slot
-                        title_slot = card.find('div', attrs={'slot': 'title'})
-                        card_title = title_slot.get_text(strip=True) if title_slot else ''
-                        
-                        # Get author from slot
-                        author_slot = card.find('div', attrs={'slot': 'author'})
-                        card_author = author_slot.get_text(strip=True) if author_slot else ''
-                        
-                        logger.info(f"  Card: ID={card_id}, ISBN={card_isbn}, Format={card_ext}, Download={card_download}, Title='{card_title[:50]}'")
-                        
-                        # Create a fake link object with extracted data
-                        class BookLink:
-                            def __init__(self, card_data):
-                                self.data = card_data
-                            
-                            def get(self, attr, default=''):
-                                if attr == 'href':
-                                    return self.data.get('href', '')
-                                return default
-                            
-                            @property
-                            def parent(self):
-                                # Return self so ISBN check works
-                                return self
-                            
-                            def get_text(self, strip=False):
-                                # Return ISBN so parent.get_text() works
-                                return self.data.get('isbn', '')
-                        
-                        book_links.append(BookLink({
-                            'id': card_id,
-                            'href': card_href,
-                            'download': card_download,  # Add download URL
-                            'isbn': card_isbn,
-                            'extension': card_ext,
-                            'title': card_title,
-                            'author': card_author
-                        }))
-                    
-                    if not book_links:
-                        logger.error(f"No books found for ISBN {isbn} on web search")
-                        logger.error(f"HTML preview: {search_response.text[:500]}")
+                    if not search_results:
+                        logger.error(f"No books found for ISBN {isbn} via API")
                         return {
                             'success': False,
-                            'error': f'❌ Không tìm thấy sách với ISBN: {isbn}\n💡 Check log file: {debug_search_html}'
+                            'error': f'❌ Không tìm thấy sách với ISBN: {isbn}'
                         }
                     
-                    logger.info(f"Found {len(book_links)} potential book(s) in search results")
+                    logger.info(f"Found {len(search_results)} book(s) from Z-Library API")
                     
-                    # Step 4.5: VALIDATE and CHOOSE the best match
-                    # Don't just take the first one - verify it's the right book!
+                    # Step 4.5: Choose the best match from API results
+                    # API results already contain authenticated download_url!
                     from difflib import SequenceMatcher
                     
                     def similarity(a, b):
@@ -586,37 +516,14 @@ class BookDownloader:
                     zlib_config = self.config_manager.get_zlibrary_config()
                     format_priority = zlib_config.get('format_priority', ['pdf', 'epub', 'mobi', 'azw3'])
                     
-                    for i, link in enumerate(book_links[:10]):  # Check first 10 results
-                        # Extract data from BookLink object
-                        if hasattr(link, 'data'):
-                            # Custom BookLink from z-bookcard
-                            candidate_id = link.data.get('id')
-                            candidate_title = link.data.get('title', '')
-                            candidate_format = link.data.get('extension', 'unknown')
-                            candidate_isbn = link.data.get('isbn', '')
-                            candidate_download = link.data.get('download', '')  # Download path
-                            candidate_author = link.data.get('author', '')
-                            href = link.data.get('href', '')
-                        else:
-                            # Fallback for regular <a> tags (if any)
-                            href = link.get('href', '')
-                            
-                            # Extract book ID
-                            id_match = re.search(r'/?book/(\d+)', href)
-                            if not id_match:
-                                continue
-                            
-                            candidate_id = id_match.group(1)
-                            
-                            # Get book title from link text or parent element
-                            title_elem = link.find('h3') or link.find(attrs={'itemprop': 'name'}) or link
-                            candidate_title = title_elem.get_text(strip=True) if title_elem else ''
-                            
-                            # Try to get format from nearby elements
-                            parent = link.parent
-                            format_elem = parent.find(class_=re.compile(r'extension|format', re.IGNORECASE)) if parent else None
-                            candidate_format = format_elem.get_text(strip=True).lower() if format_elem else 'unknown'
-                            candidate_isbn = ''
+                    for i, result in enumerate(search_results[:10]):  # Check first 10 results
+                        # Extract from API result (Dict format)
+                        candidate_id = result.get('zlibrary_id')
+                        candidate_title = result.get('title', '')
+                        candidate_format = result.get('extension', 'unknown')
+                        candidate_isbn = result.get('isbn', '')
+                        candidate_download_url = result.get('download_url', '')  # Authenticated URL!
+                        candidate_author = result.get('authors', '')
                         
                         if not candidate_id:
                             continue
@@ -652,104 +559,48 @@ class BookDownloader:
                                 'id': candidate_id,
                                 'title': candidate_title,
                                 'format': candidate_format,
-                                'download': candidate_download if hasattr(link, 'data') else None,
-                                'author': candidate_author if hasattr(link, 'data') else '',
-                                'link': link
+                                'download_url': candidate_download_url,  # Already authenticated!
+                                'author': candidate_author,
+                                'result': result  # Keep full result dict
                             }
                     
                     if not best_match:
-                        logger.error("No valid book ID found in search results")
+                        logger.error("No suitable match found after scoring")
                         return {
                             'success': False,
-                            'error': '❌ Không thể parse kết quả search'
+                            'error': '❌ Không tìm thấy sách phù hợp'
                         }
                     
-                    found_book_id = best_match['id']
-                    found_download_path = best_match.get('download')  # /dl/ID/hash from z-bookcard
-                    logger.info(f"✅ BEST MATCH: ID={found_book_id}, Title='{best_match['title'][:50]}', Format={best_match['format']}, Score={best_score}")
+                    logger.info(f"✅ BEST MATCH: ID={best_match['id']}, Title='{best_match['title'][:50]}', Format={best_match['format']}, Score={best_score}")
                     
                 except Exception as e:
                     import traceback
-                    logger.error(f"Error searching web for ISBN: {e}")
+                    logger.error(f"Error during ISBN search: {e}")
                     logger.error(f"Traceback: {traceback.format_exc()}")
                     return {
                         'success': False,
                         'error': f'❌ Lỗi khi search ISBN: {str(e)}'
                     }
                 
-                # Step 5: Use book data from web scraping + call API to get download URL
-                # We have: book ID, title, author, format from z-bookcard
-                # Now get authenticated download URL using the lib.get_by_id()
+                # Step 5: Download using authenticated download_url from API
+                # No need to fetch page again - API already returns authenticated URL!
                 
-                title = best_match.get('title', f'Book_{found_book_id}')
+                title = best_match.get('title', f'Book_{book_id}')
                 authors = best_match.get('author', 'Unknown')
                 extension = best_match.get('format', 'pdf')
+                download_url = best_match.get('download_url')
                 
-                logger.info(f"Using download path from z-bookcard: {found_download_path}")
-                
-                # ABSOLUTE FINAL SOLUTION:
-                # Hash from z-bookcard is for ANONYMOUS session
-                # We need to fetch book page AGAIN with AUTHENTICATED cookies to get fresh hash!
-                
-                lib = self.zlibrary_service.search_service.lib
-                
-                # Get authenticated cookies from lib
-                cookies_dict = {}
-                if hasattr(lib, 'cookies') and lib.cookies:
-                    cookies_dict = lib.cookies
-                    logger.info(f"Got {len(cookies_dict)} cookies from lib.cookies")
-                
-                if not cookies_dict:
-                    logger.error("No cookies available - download will fail!")
+                if not download_url:
+                    logger.error("No download_url in API result!")
                     return {
                         'success': False,
-                        'error': '❌ Không thể lấy authenticated cookies từ zlibrary session'
+                        'error': '❌ API không trả về download URL'
                     }
                 
-                # Fetch book page AGAIN with authenticated cookies to get fresh download hash
-                book_page_url = f"https://z-library.ec/book/{found_book_id}"
-                logger.info(f"Fetching book page with authenticated cookies: {book_page_url}")
-                
-                try:
-                    import requests
-                    from bs4 import BeautifulSoup
-                    
-                    headers = {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                        'Cookie': "; ".join([f"{k}={v}" for k, v in cookies_dict.items()])
-                    }
-                    
-                    auth_response = requests.get(book_page_url, headers=headers, timeout=10)
-                    auth_response.raise_for_status()
-                    
-                    auth_soup = BeautifulSoup(auth_response.content, 'html.parser')
-                    
-                    # Find download button with authenticated hash
-                    download_btn = auth_soup.find('a', class_='addDownloadedBook')
-                    if not download_btn:
-                        logger.error("Could not find download button on authenticated page")
-                        return {
-                            'success': False,
-                            'error': '❌ Không tìm thấy nút download trên trang sách'
-                        }
-                    
-                    auth_download_path = download_btn.get('href')  # /dl/ID/AUTH_HASH
-                    logger.info(f"Got authenticated download path: {auth_download_path}")
-                    
-                    download_url = f"https://z-library.ec{auth_download_path}"
-                    logger.info(f"Final download URL with authenticated hash: {download_url}")
-                    
-                except Exception as e:
-                    logger.error(f"Failed to get authenticated download URL: {e}")
-                    import traceback
-                    logger.error(traceback.format_exc())
-                    return {
-                        'success': False,
-                        'error': f'❌ Lỗi khi lấy authenticated download URL: {str(e)}'
-                    }
-                
+                logger.info(f"Using authenticated download URL from API: {download_url}")
+            
             except Exception as e:
-                logger.error(f"Error getting fresh download URL: {e}")
+                logger.error(f"Error in ISBN search workflow: {e}")
                 import traceback
                 traceback.print_exc()
                 return {
@@ -757,17 +608,16 @@ class BookDownloader:
                     'error': f'❌ Lỗi: {str(e)}'
                 }
             
-            # Chuẩn bị book_info cho service
+            # Prepare book_data for download service
             book_data = {
                 'zlibrary_id': book_id,
                 'title': title,
                 'authors': authors,
-                'download_url': download_url,
+                'download_url': download_url,  # Already authenticated from API!
                 'extension': extension,
-                'url': url,
-                'cookies': cookies_dict  # Pass authenticated cookies
+                'url': url
             }
-            logger.info(f"Downloading book ID: {book_id} with authenticated cookies")
+            logger.info(f"Downloading book ID: {book_id} via zlibrary service (API download_url)")
             file_path = self.zlibrary_service.download_book(book_data, DOWNLOAD_DIR)
             
             if not file_path or not os.path.exists(file_path):
