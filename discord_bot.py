@@ -295,6 +295,136 @@ class BookDownloader:
             logger.error(f"Error parsing book page: {e}")
             return None
     
+    async def download_by_isbn(self, isbn: str) -> Optional[dict]:
+        """
+        Download sách bằng ISBN
+        
+        Args:
+            isbn: ISBN-10 hoặc ISBN-13 (chỉ số, không có dấu gạch ngang)
+        
+        Returns:
+            dict: {
+                'success': bool,
+                'file_path': str,
+                'file_name': str,
+                'file_size': int,
+                'title': str,
+                'error': str (if failed)
+            }
+        """
+        try:
+            logger.info(f"Searching by ISBN: {isbn}")
+            
+            # Search by ISBN using zlibrary API
+            try:
+                search_results = self.zlibrary_service.search_books(isbn=isbn)
+            except Exception as e:
+                logger.warning(f"ISBN search failed: {e}")
+                search_results = None
+            
+            if not search_results:
+                return {
+                    'success': False,
+                    'error': f'❌ Không tìm thấy sách với ISBN: {isbn}'
+                }
+            
+            logger.info(f"Found {len(search_results)} book(s) for ISBN {isbn}")
+            
+            # Get format priority from config
+            zlib_config = self.config_manager.get_zlibrary_config()
+            format_priority = zlib_config.get('format_priority', ['pdf', 'epub', 'mobi', 'azw3'])
+            
+            # Choose best format
+            best_result = None
+            best_score = -1
+            
+            for i, result in enumerate(search_results[:5]):  # Check first 5
+                score = 0
+                extension = result.get('extension', '').lower()
+                
+                # Score by format priority
+                for priority_idx, fmt in enumerate(format_priority):
+                    if fmt in extension:
+                        score = 100 - priority_idx * 10
+                        break
+                
+                logger.info(f"  Result {i+1}: {result.get('title', 'N/A')[:50]} ({extension}) - Score: {score}")
+                
+                if score > best_score:
+                    best_score = score
+                    best_result = result
+            
+            if not best_result:
+                return {
+                    'success': False,
+                    'error': '❌ Không tìm thấy định dạng phù hợp'
+                }
+            
+            # Extract info
+            book_id = best_result.get('zlibrary_id')
+            title = best_result.get('title', f'Book_{isbn}')
+            authors = best_result.get('authors', 'Unknown')
+            extension = best_result.get('extension', 'pdf')
+            download_url = best_result.get('download_url')
+            
+            if not download_url:
+                return {
+                    'success': False,
+                    'error': '❌ Không có download URL'
+                }
+            
+            logger.info(f"✅ Selected: {title} ({extension}) - {download_url}")
+            
+            # Prepare book_data and download
+            book_data = {
+                'zlibrary_id': book_id,
+                'title': title,
+                'authors': authors,
+                'download_url': download_url,
+                'extension': extension,
+                'url': download_url  # Use download_url as source
+            }
+            
+            logger.info(f"Downloading book ID: {book_id} via zlibrary service")
+            
+            # Run download in executor to avoid blocking
+            loop = asyncio.get_event_loop()
+            file_path = await loop.run_in_executor(
+                None,
+                self.zlibrary_service.download_book,
+                book_data,
+                DOWNLOAD_DIR
+            )
+            
+            if not file_path or not os.path.exists(file_path):
+                return {
+                    'success': False,
+                    'error': 'Download thất bại. File không tồn tại sau khi download.'
+                }
+            
+            # Get file info
+            file_size = os.path.getsize(file_path)
+            file_name = os.path.basename(file_path)
+            
+            logger.info(f"Download thành công: {file_name} ({file_size} bytes)")
+            
+            return {
+                'success': True,
+                'file_path': file_path,
+                'file_name': file_name,
+                'file_size': file_size,
+                'title': title
+            }
+            
+        except Exception as e:
+            logger.error(f"Lỗi khi download by ISBN: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'success': False,
+                'error': f'Lỗi: {str(e)}'
+            }
+    
     async def download_book(self, url: str) -> Optional[dict]:
         """
         Download sách từ Z-Library
@@ -863,16 +993,19 @@ async def on_ready():
 
 # ===== HELPER FUNCTION =====
 
-async def process_download_request(interaction_or_ctx, url: str, is_slash: bool = False):
+async def process_download_request(interaction_or_ctx, query: str, is_slash: bool = False):
     """
-    Helper function xử lý download request
+    Helper function xử lý download request - hỗ trợ cả URL và ISBN
     Dùng chung cho cả slash command và prefix command
     
     Args:
         interaction_or_ctx: discord.Interaction (slash) hoặc commands.Context (prefix)
-        url: Z-Library URL
+        query: Z-Library URL HOẶC ISBN (10-13 số)
         is_slash: True nếu là slash command, False nếu là prefix command
     """
+    # Detect if query is ISBN or URL
+    is_isbn = re.match(r'^\d{10,13}$', query.strip())
+    
     # Get author info and initialize status_msg
     status_msg = None
     if is_slash:
@@ -886,16 +1019,28 @@ async def process_download_request(interaction_or_ctx, url: str, is_slash: bool 
     try:
         # Send initial status message (will be edited throughout)
         if is_slash:
+            if is_isbn:
+                initial_msg = f"📚 **[1/4]** Đang tìm sách với ISBN: `{query}`...\n⏳ Request từ {author.mention}"
+            else:
+                initial_msg = f"📥 **[1/4]** Đang download sách từ Z-Library...\n⏳ Request từ {author.mention}"
+            
             status_msg = await interaction_or_ctx.followup.send(
-                f"📥 **[1/4]** Đang download sách từ Z-Library...\n⏳ Request từ {author.mention}",
+                initial_msg,
                 wait=True  # Wait to get message object for editing
             )
         else:
-            await status_msg.edit(content=f"📥 **[1/4]** Đang download sách từ Z-Library...\n⏳ Request từ {author.mention}")
+            if is_isbn:
+                await status_msg.edit(content=f"📚 **[1/4]** Đang tìm sách với ISBN: `{query}`...\n⏳ Request từ {author.mention}")
+            else:
+                await status_msg.edit(content=f"📥 **[1/4]** Đang download sách từ Z-Library...\n⏳ Request từ {author.mention}")
         
-        logger.info(f"User {author} yêu cầu download: {url}")
+        logger.info(f"User {author} yêu cầu download: {query}")
         
-        download_result = await downloader.download_book(url)
+        # If ISBN, search and download first result
+        if is_isbn:
+            download_result = await downloader.download_by_isbn(query.strip())
+        else:
+            download_result = await downloader.download_book(query)
         
         if not download_result['success']:
             error_msg = f"❌ **Download thất bại:**\n```{download_result['error']}```"
@@ -968,14 +1113,19 @@ async def process_download_request(interaction_or_ctx, url: str, is_slash: bool 
 # ===== SLASH COMMANDS =====
 
 @bot.tree.command(name="download", description="📥 Download sách từ Z-Library và upload lên Google Drive")
-async def slash_download(interaction: discord.Interaction, url: str):
+async def slash_download(interaction: discord.Interaction, query: str):
     """
-    Slash command: /download <url>
+    Slash command: /download <url hoặc ISBN>
     
     Parameters:
-        url: URL của sách trên Z-Library (.ec, .se, .is, .sk)
+        query: URL sách trên Z-Library HOẶC ISBN (10 hoặc 13 số)
+    
+    Examples:
+        /download https://z-library.ec/book/11948830/2c2f55
+        /download 9780194420884
+        /download 0194420884
     """
-    await process_download_request(interaction, url, is_slash=True)
+    await process_download_request(interaction, query, is_slash=True)
 
 
 @bot.tree.command(name="quota", description="📊 Kiểm tra quota Z-Library còn lại")
