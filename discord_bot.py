@@ -138,9 +138,10 @@ class BookDownloader:
         """
         Trích xuất thông tin từ URL Z-Library
         
-        Hỗ trợ các domain: .ec, .se, .is, .sk, ...
+        Hỗ trợ các domain: .ec, .se, .is, .sk, reader.z-library.ec, ...
         Pattern: https://z-library.{domain}/book/{id}/{hash}
                  https://z-library.{domain}/dl/{id}/{hash}
+                 https://reader.z-library.ec/read/{hash}/{id}/{hash2}/...
         
         Supported URL formats:
         ✅ /book/1269938/e536b6
@@ -150,10 +151,29 @@ class BookDownloader:
         ✅ /book/1269938/e536b6/title.html?utm_source=google&utm_campaign=xyz
         ✅ /book/1269938/e536b6#section
         ✅ /dl/1269938/b88232 (direct download)
+        ✅ reader.z-library.ec/read/{hash}/{id}/{hash2}/... (online reader)
         """
         # Remove ALL query params (?xxx) and fragments (#xxx)
         # This handles: ?ts=, ?dsource=, ?utm_source=, ?ref=, etc.
         clean_url = url.split('?')[0].split('#')[0]
+        
+        # Pattern 0: reader.z-library.ec/read/{long_hash}/{id}/{hash2}/...
+        # Example: https://reader.z-library.ec/read/3b932703.../115995718/b827db/...
+        if 'reader.z-library' in url:
+            match = re.search(r'/read/[a-z0-9]+/(\d+)/([a-z0-9]+)', url, re.IGNORECASE)
+            if match:
+                book_id = match.group(1)
+                book_hash = match.group(2)
+                # Convert reader URL to book page URL
+                book_url = f"https://z-library.ec/book/{book_id}/{book_hash}"
+                logger.info(f"Converted reader URL to book URL: {book_url}")
+                return {
+                    'id': book_id,
+                    'hash': book_hash,
+                    'url': book_url,  # Use converted URL
+                    'type': 'book_page',
+                    'domain': 'z-library.ec'
+                }
         
         # Pattern 1: /book/{id}/{hash}[/optional-filename.ext] (book page)
         # Regex: /book/(\d+)/([a-z0-9]+)(?:/[^/]+)?
@@ -324,9 +344,22 @@ class BookDownloader:
                 
                 logger.info(f"Fetching book page to extract ISBN: {book_page_url}")
                 
+                # Get authenticated cookies from zlibrary service
+                lib = self.zlibrary_service.search_service.lib
+                cookies_dict = {}
+                if hasattr(lib, 'cookies') and lib.cookies:
+                    cookies_dict = lib.cookies
+                    logger.info(f"Using {len(cookies_dict)} authenticated cookies")
+                
                 headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.5',
                 }
+                
+                # Add cookies to headers if available
+                if cookies_dict:
+                    headers['Cookie'] = "; ".join([f"{k}={v}" for k, v in cookies_dict.items()])
                 
                 try:
                     response = requests.get(book_page_url, headers=headers, timeout=10)
